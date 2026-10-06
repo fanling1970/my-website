@@ -1,5 +1,5 @@
 // LAN-CMS：局域网轻量内容管理系统
-// 单二进制，零数据库（JSON 文件存储），内置富文本编辑器
+// v2：树形结构（文件夹/页面/文件），富文本编辑，图片上传/裁剪，附件下载
 // 管理后台: /admin    前台: /
 package main
 
@@ -23,43 +23,82 @@ import (
 //go:embed web
 var webFS embed.FS
 
-// Page 一个页面（标题 + 富文本内容）
-type Page struct {
+const (
+	TypeFolder = "folder"
+	TypePage   = "page"
+	TypeFile   = "file"
+)
+
+// Node 树节点：文件夹 / 页面 / 文件
+type Node struct {
 	ID        string    `json:"id"`
+	Type      string    `json:"type"`
+	Parent    string    `json:"parent"` // 父节点 ID，空 = 根节点
 	Title     string    `json:"title"`
-	Content   string    `json:"content"`
+	Content   string    `json:"content"`           // page: 富文本 HTML；file: 文件访问路径
+	FileName  string    `json:"fileName,omitempty"` // file: 原始文件名
+	Size      int64     `json:"size,omitempty"`    // file: 字节数
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
-// Store 简单的 JSON 文件存储
+// Store 简单 JSON 文件存储
 type Store struct {
 	mu    sync.Mutex
 	dir   string
 	path  string
-	pages map[string]Page
+	nodes map[string]Node
 }
 
 func NewStore(dir string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Join(dir, "uploads"), 0o755); err != nil {
 		return nil, err
 	}
-	s := &Store{dir: dir, path: filepath.Join(dir, "pages.json"), pages: map[string]Page{}}
+	if err := os.MkdirAll(filepath.Join(dir, "files"), 0o755); err != nil {
+		return nil, err
+	}
+	s := &Store{dir: dir, path: filepath.Join(dir, "nodes.json"), nodes: map[string]Node{}}
+	if _, err := os.Stat(s.path); os.IsNotExist(err) {
+		s.migrateLegacy()
+	}
 	if b, err := os.ReadFile(s.path); err == nil {
-		var list []Page
-		if err := json.Unmarshal(b, &list); err == nil {
-			for _, p := range list {
-				s.pages[p.ID] = p
+		var list []Node
+		if json.Unmarshal(b, &list) == nil {
+			for _, n := range list {
+				s.nodes[n.ID] = n
 			}
 		}
 	}
 	return s, nil
 }
 
+// migrateLegacy 兼容旧版 pages.json：全部转为根级 page 节点
+func (s *Store) migrateLegacy() {
+	b, err := os.ReadFile(filepath.Join(s.dir, "pages.json"))
+	if err != nil {
+		return
+	}
+	// 兼容带 UTF-8 BOM 的文件
+	b = []byte(strings.TrimPrefix(string(b), "\uFEFF"))
+	var list []Node
+	if json.Unmarshal(b, &list) != nil {
+		return
+	}
+	for _, n := range list {
+		if n.ID == "" {
+			continue
+		}
+		n.Type = TypePage
+		n.Parent = ""
+		s.nodes[n.ID] = n
+	}
+	_ = s.persistLocked()
+}
+
 func (s *Store) persistLocked() error {
-	var list []Page
-	for _, p := range s.pages {
-		list = append(list, p)
+	var list []Node
+	for _, n := range s.nodes {
+		list = append(list, n)
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].CreatedAt.Before(list[j].CreatedAt) })
 	b, err := json.MarshalIndent(list, "", "  ")
@@ -73,62 +112,84 @@ func (s *Store) persistLocked() error {
 	return os.Rename(tmp, s.path)
 }
 
-func (s *Store) List() []Page {
+func (s *Store) List() []Node {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	list := make([]Page, 0, len(s.pages))
-	for _, p := range s.pages {
-		list = append(list, p)
+	list := make([]Node, 0, len(s.nodes))
+	for _, n := range s.nodes {
+		list = append(list, n)
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].UpdatedAt.After(list[j].UpdatedAt) })
 	return list
 }
 
-func (s *Store) Get(id string) (Page, bool) {
+func (s *Store) Get(id string) (Node, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	p, ok := s.pages[id]
-	return p, ok
+	n, ok := s.nodes[id]
+	return n, ok
 }
 
-func (s *Store) Create(title, content string) (Page, error) {
+func (s *Store) Create(n Node) (Node, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now()
-	p := Page{ID: newID(), Title: title, Content: content, CreatedAt: now, UpdatedAt: now}
-	s.pages[p.ID] = p
+	n.ID = newID()
+	n.CreatedAt = now
+	n.UpdatedAt = now
+	s.nodes[n.ID] = n
 	if err := s.persistLocked(); err != nil {
-		delete(s.pages, p.ID)
-		return Page{}, err
+		delete(s.nodes, n.ID)
+		return Node{}, err
 	}
-	return p, nil
+	return n, nil
 }
 
-func (s *Store) Update(id, title, content string) (Page, error) {
+func (s *Store) Update(id string, n Node) (Node, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	p, ok := s.pages[id]
+	old, ok := s.nodes[id]
 	if !ok {
-		return Page{}, os.ErrNotExist
+		return Node{}, os.ErrNotExist
 	}
-	p.Title = title
-	p.Content = content
-	p.UpdatedAt = time.Now()
-	s.pages[id] = p
+	old.Title = n.Title
+	old.Content = n.Content
+	old.Parent = n.Parent
+	old.FileName = n.FileName
+	old.Size = n.Size
+	old.UpdatedAt = time.Now()
+	s.nodes[id] = old
 	if err := s.persistLocked(); err != nil {
-		return Page{}, err
+		return Node{}, err
 	}
-	return p, nil
+	return old, nil
 }
 
-func (s *Store) Delete(id string) error {
+// Delete 级联删除（文件夹连同子孙节点），返回删除数量
+func (s *Store) Delete(id string) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.pages[id]; !ok {
-		return os.ErrNotExist
+	if _, ok := s.nodes[id]; !ok {
+		return 0, os.ErrNotExist
 	}
-	delete(s.pages, id)
-	return s.persistLocked()
+	count := 0
+	var collect func(string)
+	collect = func(cur string) {
+		if _, ok := s.nodes[cur]; ok {
+			delete(s.nodes, cur)
+			count++
+		}
+		for _, n := range s.nodes {
+			if n.Parent == cur {
+				collect(n.ID)
+			}
+		}
+	}
+	collect(id)
+	if err := s.persistLocked(); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func newID() string {
@@ -162,15 +223,18 @@ func main() {
 		log.Fatalf("初始化数据目录失败: %v", err)
 	}
 	uploadsDir := filepath.Join(dataDir, "uploads")
+	filesDir := filepath.Join(dataDir, "files")
 
 	mux := http.NewServeMux()
 
-	// ---------- 页面 API ----------
-	mux.HandleFunc("GET /api/pages", func(w http.ResponseWriter, r *http.Request) {
+	// ---------- 节点 API ----------
+	mux.HandleFunc("GET /api/nodes", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, store.List())
 	})
-	mux.HandleFunc("POST /api/pages", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/nodes", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
+			Type    string `json:"type"`
+			Parent  string `json:"parent"`
 			Title   string `json:"title"`
 			Content string `json:"content"`
 		}
@@ -178,50 +242,60 @@ func main() {
 			writeJSON(w, 400, map[string]string{"error": "请求格式错误"})
 			return
 		}
-		p, err := store.Create(req.Title, req.Content)
+		if req.Type != TypeFolder && req.Type != TypePage && req.Type != TypeFile {
+			writeJSON(w, 400, map[string]string{"error": "type 必须是 folder/page/file"})
+			return
+		}
+		if req.Title == "" {
+			writeJSON(w, 400, map[string]string{"error": "标题不能为空"})
+			return
+		}
+		n, err := store.Create(Node{Type: req.Type, Parent: req.Parent, Title: req.Title, Content: req.Content})
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, 201, p)
+		writeJSON(w, 201, n)
 	})
-	mux.HandleFunc("GET /api/pages/{id}", func(w http.ResponseWriter, r *http.Request) {
-		p, ok := store.Get(r.PathValue("id"))
+	mux.HandleFunc("GET /api/nodes/{id}", func(w http.ResponseWriter, r *http.Request) {
+		n, ok := store.Get(r.PathValue("id"))
 		if !ok {
 			writeJSON(w, 404, map[string]string{"error": "not found"})
 			return
 		}
-		writeJSON(w, 200, p)
+		writeJSON(w, 200, n)
 	})
-	mux.HandleFunc("PUT /api/pages/{id}", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("PUT /api/nodes/{id}", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Title   string `json:"title"`
 			Content string `json:"content"`
+			Parent  string `json:"parent"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, 400, map[string]string{"error": "请求格式错误"})
 			return
 		}
-		p, err := store.Update(r.PathValue("id"), req.Title, req.Content)
+		n, err := store.Update(r.PathValue("id"), Node{Title: req.Title, Content: req.Content, Parent: req.Parent})
 		if err != nil {
 			writeJSON(w, 404, map[string]string{"error": "not found"})
 			return
 		}
-		writeJSON(w, 200, p)
+		writeJSON(w, 200, n)
 	})
-	mux.HandleFunc("DELETE /api/pages/{id}", func(w http.ResponseWriter, r *http.Request) {
-		if err := store.Delete(r.PathValue("id")); err != nil {
+	mux.HandleFunc("DELETE /api/nodes/{id}", func(w http.ResponseWriter, r *http.Request) {
+		count, err := store.Delete(r.PathValue("id"))
+		if err != nil {
 			writeJSON(w, 404, map[string]string{"error": "not found"})
 			return
 		}
-		writeJSON(w, 200, map[string]bool{"ok": true})
+		writeJSON(w, 200, map[string]any{"ok": true, "deleted": count})
 	})
 
-	// ---------- 图片上传 ----------
+	// ---------- 文件上传（图片 + 附件）----------
 	mux.HandleFunc("POST /api/upload", func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, 20<<20)
-		if err := r.ParseMultipartForm(20 << 20); err != nil {
-			writeJSON(w, 400, map[string]string{"error": "文件太大或格式错误（最大 20MB）"})
+		r.Body = http.MaxBytesReader(w, r.Body, 200<<20)
+		if err := r.ParseMultipartForm(200 << 20); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "文件太大或格式错误（最大 200MB）"})
 			return
 		}
 		file, header, err := r.FormFile("file")
@@ -232,19 +306,26 @@ func main() {
 		defer file.Close()
 
 		ext := strings.ToLower(filepath.Ext(header.Filename))
-		if !allowedImageExt[ext] {
-			writeJSON(w, 400, map[string]string{"error": "仅支持 jpg / png / gif / webp"})
-			return
+		kind := "file"
+		subdir := "files"
+		if allowedImageExt[ext] {
+			kind = "image"
+			subdir = "uploads"
 		}
-		name := time.Now().Format("20060102150405") + "-" + newID()[:6] + ext
-		dst, err := os.Create(filepath.Join(uploadsDir, name))
+		name := time.Now().Format("20060102150405") + "-" + newID()[:8] + ext
+		dir := filesDir
+		if subdir == "uploads" {
+			dir = uploadsDir
+		}
+		dst, err := os.Create(filepath.Join(dir, name))
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": "保存失败"})
 			return
 		}
-		if _, err := io.Copy(dst, file); err != nil {
+		size, err := io.Copy(dst, file)
+		if err != nil {
 			dst.Close()
-			_ = os.Remove(filepath.Join(uploadsDir, name))
+			_ = os.Remove(filepath.Join(dir, name))
 			writeJSON(w, 500, map[string]string{"error": "写入失败"})
 			return
 		}
@@ -252,12 +333,20 @@ func main() {
 
 		writeJSON(w, 200, map[string]any{
 			"errno": 0,
-			"data":  map[string]string{"url": "/uploads/" + name, "alt": header.Filename, "href": ""},
+			"data": map[string]any{
+				"url":  "/" + subdir + "/" + name,
+				"alt":  header.Filename,
+				"href": "",
+				"kind": kind,
+				"name": header.Filename,
+				"size": size,
+			},
 		})
 	})
 
-	// 已上传的图片
+	// 图片与附件静态服务
 	mux.Handle("GET /uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir(uploadsDir))))
+	mux.Handle("GET /files/", http.StripPrefix("/files/", http.FileServer(http.Dir(filesDir))))
 
 	// 前端页面（/ → index.html，/admin → admin.html）
 	webSub, err := fs.Sub(webFS, "web")
@@ -278,7 +367,7 @@ func main() {
 	mux.HandleFunc("GET /admin", servePage("admin.html"))
 	mux.HandleFunc("GET /", servePage("index.html"))
 
-	log.Printf("LAN-CMS 已启动: http://0.0.0.0:%s   管理后台: /admin", port)
+	log.Printf("LAN-CMS v2 已启动: http://0.0.0.0:%s   管理后台: /admin", port)
 	if err := http.ListenAndServe(":"+port, mux); err != nil {
 		log.Fatal(err)
 	}

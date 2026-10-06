@@ -17,17 +17,24 @@ a{color:inherit;text-decoration:none}
 .admin-link{margin-left:auto;font-size:13px;color:#9db8cc}
 .admin-link:hover{color:#fff}
 main{max-width:900px;margin:0 auto;padding:24px 20px 40px}
-/* 列表视图 */
-.list-head{font-size:22px;font-weight:700;margin-bottom:16px}
-.page-list{list-style:none;display:flex;flex-direction:column;gap:10px}
-.page-card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;cursor:pointer;transition:border-color .15s}
-.page-card:hover{border-color:var(--brand2)}
-.page-card .t{font-size:16px;font-weight:700}
-.page-card .m{font-size:12px;color:var(--ink3);margin-top:4px}
-/* 详情视图 */
-.crumb{margin-bottom:14px;font-size:13px}
+.crumb{font-size:13px;color:var(--ink2);margin-bottom:16px;display:flex;flex-wrap:wrap;gap:4px;align-items:center}
 .crumb a{color:var(--brand2);font-weight:600}
 .crumb a:hover{text-decoration:underline}
+.crumb .sep{color:var(--ink3)}
+.list-head{font-size:22px;font-weight:700;margin-bottom:16px}
+.node-list{list-style:none;display:flex;flex-direction:column;gap:10px}
+.node-card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:15px 18px;display:flex;align-items:center;gap:14px;cursor:pointer;transition:border-color .15s}
+.node-card:hover{border-color:var(--brand2)}
+.node-card .ico{width:38px;height:38px;flex:none;border-radius:9px;display:flex;align-items:center;justify-content:center}
+.node-card .ico.folder{background:#e7f0f7;color:var(--brand)}
+.node-card .ico.page{background:#e3f1f6;color:var(--brand2)}
+.node-card .ico.file{background:#fdeedd;color:var(--accent)}
+.node-card .ico svg{width:20px;height:20px}
+.node-card .tt{font-size:15px;font-weight:700}
+.node-card .ds{font-size:12px;color:var(--ink3);margin-top:2px}
+.node-card .act{margin-left:auto;flex:none}
+.dl-btn{display:inline-flex;align-items:center;gap:5px;padding:7px 14px;border-radius:8px;background:var(--brand2);color:#fff;font-size:13px;font-weight:600}
+.dl-btn svg{width:14px;height:14px}
 .article{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:36px 44px}
 .article h1{font-size:26px;font-weight:700;line-height:1.4;margin-bottom:10px}
 .article .meta{font-size:13px;color:var(--ink3);padding-bottom:16px;border-bottom:1px solid var(--line);margin-bottom:22px}
@@ -36,7 +43,7 @@ main{max-width:900px;margin:0 auto;padding:24px 20px 40px}
 .article p{margin-bottom:14px;font-size:15px}
 .article a{color:var(--brand2);font-weight:600}
 .article a:hover{text-decoration:underline}
-.article img{max-width:100%;border:1px solid var(--line);border-radius:8px}
+.article img{max-width:100%;border-radius:8px}
 .article ul,.article ol{margin:0 0 14px 24px;font-size:15px}
 .article li{margin-bottom:6px}
 .article blockquote{border-left:4px solid var(--line);padding:6px 16px;margin:14px 0;color:var(--ink2);background:#f6f9fc;border-radius:0 8px 8px 0}
@@ -65,37 +72,94 @@ footer{max-width:900px;margin:0 auto;padding:0 20px 26px;font-size:12px;color:va
 <script>
 (function(){
   var main = document.getElementById('main');
-  function esc(s){ return String(s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
-  function fmt(t){ try{ return new Date(t).toLocaleString('zh-CN',{hour12:false}); }catch(e){ return ''; } }
+  var allNodes = [];
+  var ICON = {
+    folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+    page: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>',
+    file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M13 2v7h7"/></svg>',
+    dl: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v12M6 9l6 6 6-6"/><path d="M4 19h16"/></svg>'
+  };
 
-  function renderList(list){
-    if(!list.length){ main.innerHTML = '<div class="empty">还没有内容，去 <a href="/admin" style="color:var(--brand2)">管理后台</a> 发布第一篇吧</div>'; return; }
-    var html = '<div class="list-head">全部内容</div><ul class="page-list">';
-    list.forEach(function(p){
-      html += '<li class="page-card" data-id="' + esc(p.id) + '"><div class="t">' + esc(p.title || '(无标题)') + '</div><div class="m">更新于 ' + fmt(p.updatedAt) + '</div></li>';
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function fmt(t){ try{ return new Date(t).toLocaleString('zh-CN',{hour12:false}); }catch(e){ return ''; } }
+  function fmtSize(b){
+    if (!b) return '';
+    if (b < 1024) return b + ' B';
+    if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+    if (b < 1073741824) return (b/1048576).toFixed(1) + ' MB';
+    return (b/1073741824).toFixed(2) + ' GB';
+  }
+  function findNode(id){ for (var i=0;i<allNodes.length;i++){ if (allNodes[i].id===id) return allNodes[i]; } return null; }
+  function childrenOf(id){ return allNodes.filter(function(n){ return n.parent === id; }); }
+  function sortKids(list){ return list.slice().sort(function(a,b){ return a.type==='folder' && b.type!=='folder' ? -1 : (a.type!=='folder' && b.type==='folder' ? 1 : (a.title < b.title ? -1 : 1)); }); }
+
+  // 面包屑（从根到当前节点路径）
+  function breadcrumb(id){
+    var parts = [];
+    var cur = id ? findNode(id) : null;
+    while (cur){
+      parts.unshift({ id: cur.id, title: cur.title });
+      cur = cur.parent ? findNode(cur.parent) : null;
+    }
+    var html = '<a href="/">首页</a>';
+    parts.forEach(function(p){
+      html += '<span class="sep"> / </span><a href="/?f=' + p.id + '">' + esc(p.title) + '</a>';
+    });
+    return '<div class="crumb">' + html + '</div>';
+  }
+
+  function renderFolder(fid){
+    var folder = fid ? findNode(fid) : null;
+    if (fid && !folder){ main.innerHTML = '<div class="empty">文件夹不存在或已删除</div>'; return; }
+    var kids = sortKids(childrenOf(fid || ''));
+    if (!kids.length){
+      main.innerHTML = breadcrumb(fid) + '<div class="empty">这里还没有内容</div>';
+      return;
+    }
+    var html = breadcrumb(fid) + '<div class="list-head">' + esc(folder ? folder.title : '全部内容') + '</div><ul class="node-list">';
+    kids.forEach(function(n){
+      var icon = n.type==='folder' ? ICON.folder : (n.type==='file' ? ICON.file : ICON.page);
+      var cls = n.type==='folder' ? 'folder' : (n.type==='file' ? 'file' : 'page');
+      var ds = n.type==='folder' ? childrenOf(n.id).length + ' 项' : (n.type==='file' ? fmtSize(n.size) : '更新于 ' + fmt(n.updatedAt));
+      html += '<li class="node-card" data-type="' + n.type + '" data-id="' + n.id + '" data-url="' + esc(n.content||'') + '">'
+        + '<span class="ico ' + cls + '">' + icon + '</span>'
+        + '<span class="tt">' + esc(n.title) + '</span>'
+        + '<span class="ds">' + ds + '</span>'
+        + '</li>';
     });
     html += '</ul>';
     main.innerHTML = html;
-    Array.prototype.forEach.call(main.querySelectorAll('.page-card'), function(c){
-      c.onclick = function(){ location.href = '/?p=' + c.getAttribute('data-id'); };
+    Array.prototype.forEach.call(main.querySelectorAll('.node-card'), function(c){
+      var type = c.getAttribute('data-type');
+      var id = c.getAttribute('data-id');
+      var url = c.getAttribute('data-url');
+      c.onclick = function(){
+        if (type === 'folder') location.href = '/?f=' + id;
+        else if (type === 'file'){ var a = document.createElement('a'); a.href = url; a.download = ''; document.body.appendChild(a); a.click(); a.remove(); }
+        else location.href = '/?p=' + id;
+      };
     });
   }
 
-  function renderDetail(id){
-    fetch('/api/pages/' + id).then(function(r){ return r.json(); }).then(function(p){
-      if(p.error){ main.innerHTML = '<div class="empty">内容不存在或已删除</div>'; return; }
+  function renderPage(pid){
+    fetch('/api/nodes/' + pid).then(function(r){ return r.json(); }).then(function(n){
+      if (n.error){ main.innerHTML = '<div class="empty">内容不存在或已删除</div>'; return; }
       main.innerHTML = '<div class="crumb"><a href="/">← 返回列表</a></div>'
-        + '<article class="article"><h1>' + esc(p.title) + '</h1>'
-        + '<div class="meta">更新于 ' + fmt(p.updatedAt) + '</div>'
-        + '<div class="content">' + p.content + '</div></article>'
+        + '<article class="article"><h1>' + esc(n.title) + '</h1>'
+        + '<div class="meta">更新于 ' + fmt(n.updatedAt) + '</div>'
+        + '<div class="content">' + n.content + '</div></article>'
         + '<div class="back"><a href="/">← 返回列表</a></div>';
     });
   }
 
   var params = new URLSearchParams(location.search);
   var pid = params.get('p');
-  if(pid){ renderDetail(pid); }
-  else{ fetch('/api/pages').then(function(r){ return r.json(); }).then(renderList); }
+  var fid = params.get('f');
+  fetch('/api/nodes').then(function(r){ return r.json(); }).then(function(list){
+    allNodes = list;
+    if (pid){ renderPage(pid); }
+    else { renderFolder(fid || ''); }
+  });
 
   document.getElementById('logo').onclick = function(){ location.href = '/'; };
 })();

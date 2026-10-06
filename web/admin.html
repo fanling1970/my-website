@@ -5,29 +5,45 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>内容管理 - LAN CMS</title>
 <link href="https://cdn.jsdelivr.net/npm/@wangeditor/editor@5.1.23/dist/css/style.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.css" rel="stylesheet">
 <style>
 :root{--bg:#eef3f7;--card:#fff;--line:#d7e1ea;--ink:#1f2d3a;--ink2:#52606d;--brand:#1b4a6b;--brand2:#0e8aa8;--accent:#e8890c}
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--ink);height:100vh;overflow:hidden}
 .app{display:flex;height:100vh}
-/* 左侧菜单 */
-.side{width:260px;flex:none;background:var(--brand);color:#fff;display:flex;flex-direction:column;min-width:0}
-.side-head{padding:16px;display:flex;flex-direction:column;gap:10px;border-bottom:1px solid rgba(255,255,255,.12)}
+/* 左侧 */
+.side{width:270px;flex:none;background:var(--brand);color:#fff;display:flex;flex-direction:column;min-width:0}
+.side-head{padding:14px;display:flex;flex-direction:column;gap:8px;border-bottom:1px solid rgba(255,255,255,.12)}
 .logo{font-size:18px;font-weight:700;letter-spacing:.5px}
 .logo span{color:#46c8d8}
-.btn-new{padding:9px;border:none;border-radius:8px;background:var(--accent);color:#fff;font-size:14px;font-weight:600;cursor:pointer}
+.btn-row{display:flex;gap:6px}
+.btn-s{padding:8px 0;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;flex:1;text-align:center}
+.btn-new{background:var(--accent);color:#fff}
 .btn-new:hover{filter:brightness(1.08)}
-.page-list{list-style:none;flex:1;overflow-y:auto;padding:8px}
-.page-item{display:flex;align-items:center;gap:6px;padding:10px 12px;border-radius:8px;cursor:pointer;font-size:14px;color:#d5e3ee}
-.page-item:hover{background:rgba(255,255,255,.08)}
-.page-item.active{background:rgba(255,255,255,.16);color:#fff;font-weight:600}
-.page-item .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.page-item .del{display:none;border:none;background:none;color:#f5a7a7;font-size:15px;cursor:pointer;line-height:1;padding:2px 6px;border-radius:5px}
-.page-item:hover .del{display:block}
-.page-item .del:hover{background:rgba(255,0,0,.15)}
-.side-foot{padding:12px 16px;font-size:12px;color:#9db8cc;border-top:1px solid rgba(255,255,255,.12)}
+.btn-folder{background:rgba(255,255,255,.15);color:#fff}
+.btn-folder:hover{background:rgba(255,255,255,.25)}
+.btn-upload{background:rgba(255,255,255,.15);color:#fff}
+.btn-upload:hover{background:rgba(255,255,255,.25)}
+.tree-wrap{flex:1;overflow-y:auto;padding:8px}
+.tree{list-style:none}
+.tree ul{list-style:none;padding-left:18px}
+.node{display:flex;align-items:center;gap:6px;padding:7px 10px;border-radius:7px;cursor:pointer;font-size:14px;color:#d5e3ee;user-select:none}
+.node:hover{background:rgba(255,255,255,.08)}
+.node.active{background:rgba(255,255,255,.18);color:#fff;font-weight:600}
+.node svg{width:16px;height:16px;flex:none;stroke:currentColor}
+.node .arrow{transition:transform .15s}
+.node .arrow.open{transform:rotate(90deg)}
+.node .arrow.leaf{visibility:hidden}
+.node .tw{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.node .del{display:none;border:none;background:none;color:#f5a7a7;font-size:15px;cursor:pointer;line-height:1;padding:2px 6px;border-radius:5px}
+.node:hover .del{display:block}
+.node .del:hover{background:rgba(255,0,0,.15)}
+.node .go{display:none;border:none;background:none;color:#9fe0ee;font-size:13px;cursor:pointer;padding:2px 6px;border-radius:5px}
+.node:hover .go{display:block}
+.node .go:hover{background:rgba(255,255,255,.1)}
+.side-foot{padding:12px 14px;font-size:12px;color:#9db8cc;border-top:1px solid rgba(255,255,255,.12)}
 .side-foot a{color:#46c8d8;text-decoration:none}
-/* 右侧编辑区 */
+/* 右侧 */
 .main{flex:1;display:flex;flex-direction:column;min-width:0}
 .editor-head{display:flex;gap:12px;align-items:center;padding:14px 20px;background:var(--card);border-bottom:1px solid var(--line);flex-wrap:wrap}
 #title{flex:1;min-width:220px;border:1px solid var(--line);border-radius:8px;padding:10px 14px;font-size:16px;font-weight:600;color:var(--ink);outline:none}
@@ -38,15 +54,42 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
 .btn-preview{padding:9px 18px;border:1px solid var(--brand2);border-radius:8px;background:#fff;color:var(--brand2);font-size:14px;font-weight:600;cursor:pointer}
 .btn-preview:hover{background:#e8f6fa}
 .status{font-size:12px;color:var(--ink2);min-width:70px}
-#toolbar-container{flex:none;border-bottom:1px solid var(--line)}
-#editor-container{flex:1;overflow-y:auto;margin:0}
+#editor-area{flex:1;display:none;flex-direction:column;min-height:0}
+#editor-area.show{display:flex}
+#editor-container{flex:1;overflow-y:auto}
 .w-e-text-container{background:var(--card)}
+#panel-area{flex:1;display:none;overflow-y:auto}
+#panel-area.show{display:block}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:30px 36px;margin:20px;color:var(--ink2);font-size:14px}
+.panel h2{font-size:18px;color:var(--ink);margin-bottom:10px}
+.frow{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.fbtn{display:inline-flex;align-items:center;gap:6px;padding:9px 18px;border-radius:8px;background:var(--brand2);color:#fff;font-size:14px;font-weight:600;text-decoration:none}
+.fbtn svg{width:15px;height:15px}
+.hint{margin-top:8px;font-size:13px;color:var(--ink3)}
+/* 弹窗 */
+.mask{position:fixed;inset:0;background:rgba(15,25,35,.55);display:none;align-items:center;justify-content:center;z-index:999}
+.mask.show{display:flex}
+.modal{background:#fff;border-radius:12px;padding:22px 24px;width:min(560px,92vw);max-height:88vh;overflow:auto;box-shadow:0 18px 50px rgba(0,0,0,.3)}
+.modal h3{font-size:16px;margin-bottom:16px}
+.mrow{margin-bottom:14px}
+.mrow label{display:block;font-size:13px;color:var(--ink2);margin-bottom:6px}
+.mrow input[type=text],.mrow select{width:100%;padding:9px 12px;border:1px solid var(--line);border-radius:8px;font-size:14px;outline:none}
+.mrow input:focus,.mrow select:focus{border-color:var(--brand2)}
+.mrow .note{font-size:12px;color:var(--ink3);margin-top:4px}
+.mbtn-row{display:flex;justify-content:flex-end;gap:8px;margin-top:6px}
+.mbtn{padding:8px 20px;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer}
+.mbtn-ok{background:var(--brand2);color:#fff}
+.mbtn-ok:hover{background:#0b7a95}
+.mbtn-cancel{background:#e4e9ee;color:var(--ink2)}
+.mbtn-cancel:hover{background:#d3dbe3}
+.crop-box{max-height:55vh;overflow:hidden;text-align:center}
+.crop-box img{max-width:100%;display:block;margin:0 auto}
 @media (max-width:700px){
   body{overflow:auto}
   .app{flex-direction:column;height:auto;min-height:100vh}
-  .side{width:100%;max-height:38vh}
-  .main{min-height:62vh}
-  #editor-container{height:50vh;overflow-y:auto}
+  .side{width:100%;max-height:40vh}
+  .main{min-height:60vh}
+  #editor-container{height:50vh}
 }
 </style>
 </head>
@@ -55,125 +98,433 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
   <aside class="side">
     <div class="side-head">
       <div class="logo">LAN <span>CMS</span></div>
-      <button id="btn-new" class="btn-new">＋ 新建页面</button>
+      <div class="btn-row">
+        <button id="btn-new" class="btn-s btn-new">＋ 新建页面</button>
+        <button id="btn-folder" class="btn-s btn-folder">＋ 文件夹</button>
+        <button id="btn-upload" class="btn-s btn-upload">上传附件</button>
+      </div>
     </div>
-    <ul id="page-list" class="page-list"></ul>
+    <div class="tree-wrap"><ul id="tree" class="tree"></ul></div>
     <div class="side-foot"><a href="/" target="_blank">查看前台 →</a></div>
   </aside>
   <main class="main">
     <div class="editor-head">
-      <input id="title" type="text" placeholder="输入页面标题…">
+      <input id="title" type="text" placeholder="输入标题…">
       <div class="actions">
         <button id="btn-save" class="btn-save">保存</button>
         <button id="btn-preview" class="btn-preview">预览</button>
         <span id="status" class="status"></span>
       </div>
     </div>
-    <div id="toolbar-container"></div>
-    <div id="editor-container"><p><br></p></div>
+    <div id="editor-area">
+      <div id="toolbar-container"></div>
+      <div id="editor-container"></div>
+    </div>
+    <div id="panel-area"></div>
   </main>
 </div>
 
+<!-- 通用弹窗（裁剪 / 链接） -->
+<div class="mask" id="mask">
+  <div class="modal" id="modal-box"></div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/@wangeditor/editor@5.1.23/dist/index.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.js"></script>
 <script>
 (function(){
+  var ICON = {
+    folder: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+    page: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>',
+    file: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M13 2v7h7"/></svg>',
+    arrow: '<svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg>',
+    link: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1.5-1.5"/></svg>',
+    crop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 2v16h16"/><path d="M18 8h4v4M6 10H2v4M16 6H2v4"/></svg>',
+    border: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 15h8M9 8v8M15 8v8"/></svg>',
+    dl: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v12M6 9l6 6 6-6"/><path d="M4 19h16"/></svg>'
+  };
+
+  var allNodes = [];
   var currentId = null;
+  var currentType = null;
   var editor = null;
+  var expanded = {};
   var statusEl = document.getElementById('status');
 
   function toast(msg){ statusEl.textContent = msg; clearTimeout(toast._t); toast._t = setTimeout(function(){ statusEl.textContent=''; }, 2500); }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function childrenOf(id){ return allNodes.filter(function(n){ return n.parent === id; }); }
+  function findNode(id){ for (var i=0;i<allNodes.length;i++){ if (allNodes[i].id===id) return allNodes[i]; } return null; }
+  function fmtSize(b){
+    if (!b) return '';
+    if (b < 1024) return b + ' B';
+    if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+    if (b < 1073741824) return (b/1048576).toFixed(1) + ' MB';
+    return (b/1073741824).toFixed(2) + ' GB';
+  }
 
-  // 初始化编辑器
-  var editorConfig = {
-    placeholder: '在这里编辑内容：插入图片、超链接、列表…',
-    MENU_CONF: {
-      uploadImage: {
-        server: '/api/upload',          // 上传接口（后端已实现）
-        fieldName: 'file',
-        maxFileSize: 20 * 1024 * 1024,
-        allowedFileTypes: ['image/*'],
-        failed: function(err, res){ toast('图片上传失败: ' + err); }
+  /* ============ 弹窗 ============ */
+  function openModal(html){
+    document.getElementById('modal-box').innerHTML = html;
+    document.getElementById('mask').classList.add('show');
+  }
+  function closeModal(){
+    document.getElementById('mask').classList.remove('show');
+    document.getElementById('modal-box').innerHTML = '';
+  }
+  document.getElementById('mask').addEventListener('click', function(e){ if(e.target === this) closeModal(); });
+
+  /* ============ 树 ============ */
+  function renderTree(){
+    var html = '';
+    childrenOf('').forEach(function(n){ html += nodeHTML(n, 0); });
+    document.getElementById('tree').innerHTML = html;
+    bindTreeEvents();
+  }
+  function nodeHTML(n, depth){
+    var kids = childrenOf(n.id);
+    var open = !!expanded[n.id];
+    var icon = n.type==='folder' ? ICON.folder : (n.type==='file' ? ICON.file : ICON.page);
+    var html = '<li><div class="node' + (n.id===currentId?' active':'') + '" data-id="' + n.id + '" style="padding-left:' + (10+depth*16) + 'px">';
+    if (n.type === 'folder'){
+      html += ICON.arrow.replace('class="arrow"', 'class="arrow' + (kids.length ? (open?' open':'') : ' leaf') + '"');
+    } else {
+      html += '<svg class="arrow leaf"></svg>';
+    }
+    html += icon;
+    html += '<span class="tw">' + esc(n.title || '(未命名)') + '</span>';
+    if (n.type === 'page') html += '<button class="go" data-act="preview" title="预览">↗</button>';
+    html += '<button class="del" data-act="del" title="删除">×</button>';
+    html += '</div>';
+    if (kids.length && open){
+      html += '<ul>';
+      kids.forEach(function(k){ html += nodeHTML(k, depth+1); });
+      html += '</ul>';
+    }
+    html += '</li>';
+    return html;
+  }
+  function bindTreeEvents(){
+    Array.prototype.forEach.call(document.querySelectorAll('#tree .node'), function(el){
+      el.onclick = function(e){
+        var act = e.target && e.target.getAttribute ? e.target.getAttribute('data-act') : null;
+        var id = el.getAttribute('data-id');
+        if (act === 'del'){
+          e.stopPropagation();
+          var n = findNode(id);
+          if(!confirm('确定删除「' + ((n&&n.title)||'') + '」及其全部子内容？')) return;
+          fetch('/api/nodes/' + id, {method:'DELETE'}).then(function(r){return r.json();}).then(function(res){
+            if (res.deleted){ toast('已删除 ' + res.deleted + ' 项'); }
+            if(currentId === id){ currentId = null; currentType = null; }
+            loadAll();
+          });
+          return;
+        }
+        if (act === 'preview'){
+          e.stopPropagation();
+          window.open('/?p=' + id, '_blank');
+          return;
+        }
+        var n = findNode(id);
+        if (n && n.type === 'folder'){
+          expanded[id] = !expanded[id];
+          renderTree();
+        }
+        selectNode(id);
+      };
+    });
+  }
+
+  /* ============ 选中与编辑 ============ */
+  function selectNode(id){
+    var n = findNode(id);
+    if (!n) return;
+    currentId = n.id;
+    currentType = n.type;
+    document.getElementById('title').value = n.title || '';
+    Array.prototype.forEach.call(document.querySelectorAll('#tree .node'), function(el){
+      el.classList.toggle('active', el.getAttribute('data-id')===id);
+    });
+    var ea = document.getElementById('editor-area');
+    var pa = document.getElementById('panel-area');
+    if (n.type === 'page'){
+      pa.classList.remove('show');
+      ea.classList.add('show');
+      if (!editor) initEditor();
+      editor.setHtml(n.content || '<p><br></p>');
+    } else {
+      ea.classList.remove('show');
+      pa.classList.add('show');
+      if (n.type === 'folder'){
+        pa.innerHTML = '<div class="panel"><h2>' + esc(n.title) + '</h2>'
+          + '<div class="hint">在此文件夹下：新建页面 / 新建子文件夹 / 上传附件。文件会自动生成下载链接。</div></div>';
+      } else {
+        pa.innerHTML = '<div class="panel"><h2>' + esc(n.title) + '</h2>'
+          + '<div class="frow"><a class="fbtn" href="' + esc(n.content) + '" download>' + ICON.dl + '下载文件</a>'
+          + '<span class="hint">' + fmtSize(n.size) + ' · ' + esc(n.content) + '</span></div></div>';
       }
     }
-  };
-  editor = window.wangEditor.createEditor({
-    selector: '#editor-container',
-    html: '<p><br></p>',
-    config: editorConfig,
-    mode: 'default'
-  });
-  window.wangEditor.createToolbar({ editor: editor, selector: '#toolbar-container', config: {}, mode: 'default' });
+  }
 
-  // 页面列表
-  function loadList(){
-    fetch('/api/pages').then(function(r){ return r.json(); }).then(function(list){
-      var ul = document.getElementById('page-list');
-      ul.innerHTML = '';
-      list.forEach(function(p){
-        var li = document.createElement('li');
-        li.className = 'page-item' + (p.id === currentId ? ' active' : '');
-        var t = document.createElement('span'); t.className='t'; t.textContent = p.title || '(无标题)';
-        var d = document.createElement('button'); d.className='del'; d.textContent='×';
-        d.onclick = function(e){
-          e.stopPropagation();
-          if(!confirm('确定删除「' + (p.title||'(无标题)') + '」？')) return;
-          fetch('/api/pages/' + p.id, { method:'DELETE' }).then(function(r){ return r.json(); }).then(function(){
-            if(currentId === p.id){ currentId = null; document.getElementById('title').value=''; editor.setHtml('<p><br></p>'); }
-            loadList(); toast('已删除');
+  /* ============ wangEditor ============ */
+  function initEditor(){
+    var E = window.wangEditor;
+
+    /* 自定义菜单：插入链接 */
+    function LinkMenu(){
+      this.title = '插入链接';
+      this.tag = 'button';
+      this.iconSvg = ICON.link;
+    }
+    LinkMenu.prototype.getValue = function(){ return ''; };
+    LinkMenu.prototype.isActive = function(){ return false; };
+    LinkMenu.prototype.isDisabled = function(){ return false; };
+    LinkMenu.prototype.exec = function(ed){
+      var pages = allNodes.filter(function(n){ return n.type === 'page'; });
+      var opts = pages.map(function(p){ return '<option value="' + p.id + '">' + esc(p.title) + '</option>'; }).join('');
+      openModal(
+        '<h3>插入链接</h3>'
+        + '<div class="mrow"><label>链接文本（留空则显示地址）</label><input type="text" id="lk-text" placeholder="显示的文字"></div>'
+        + '<div class="mrow"><label>站内页面（选择后自动填充地址）</label><select id="lk-page"><option value="">— 不选，手动填地址 —</option>' + opts + '</select></div>'
+        + '<div class="mrow"><label>链接地址</label><input type="text" id="lk-url" placeholder="http://… 或 /?p=页面ID"></div>'
+        + '<div class="mrow"><label>打开方式</label><select id="lk-target"><option value="_blank">新标签页打开</option><option value="_self">当前页打开</option></select></div>'
+        + '<div class="mbtn-row"><button class="mbtn mbtn-cancel" id="lk-cancel">取消</button><button class="mbtn mbtn-ok" id="lk-ok">确定</button></div>'
+      );
+      document.getElementById('lk-page').onchange = function(){
+        var v = document.getElementById('lk-page').value;
+        if (v) document.getElementById('lk-url').value = '/?p=' + v;
+      };
+      document.getElementById('lk-cancel').onclick = closeModal;
+      document.getElementById('lk-ok').onclick = function(){
+        var text = document.getElementById('lk-text').value;
+        var url = document.getElementById('lk-url').value.trim();
+        var target = document.getElementById('lk-target').value;
+        if (!url){ toast('请填写链接地址或选择站内页面'); return; }
+        ed.restoreSelection();
+        ed.dangerouslyInsertHtml('<a href="' + esc(url) + '" target="' + target + '">' + esc(text || url) + '</a>');
+        closeModal();
+      };
+    };
+
+    /* 自定义菜单：裁剪图片 */
+    function CropMenu(){
+      this.title = '裁剪图片';
+      this.tag = 'button';
+      this.iconSvg = ICON.crop;
+    }
+    CropMenu.prototype.getValue = function(){ return ''; };
+    CropMenu.prototype.isActive = function(){ return false; };
+    CropMenu.prototype.isDisabled = function(){ return false; };
+    CropMenu.prototype.exec = function(ed){
+      var imgNode = ed.getSelectedNodeByType('image');
+      if (!imgNode){ toast('请先点击选中一张图片'); return; }
+      openModal(
+        '<h3>裁剪图片</h3>'
+        + '<div class="crop-box"><img id="crop-img" src="' + esc(imgNode.src) + '" alt=""></div>'
+        + '<div class="mrow note">拖动选区调整裁剪范围，确定后替换为裁剪结果</div>'
+        + '<div class="mbtn-row"><button class="mbtn mbtn-cancel" id="crop-cancel">取消</button><button class="mbtn mbtn-ok" id="crop-ok">确定裁剪</button></div>'
+      );
+      document.getElementById('crop-cancel').onclick = closeModal;
+      var img = document.getElementById('crop-img');
+      var cropper = null;
+      img.onload = function(){ cropper = new Cropper(img, { viewMode: 1, autoCropArea: 0.8, background: false }); };
+      if (img.complete) img.onload();
+      document.getElementById('crop-ok').onclick = function(){
+        if (!cropper){ toast('图片尚未加载完成'); return; }
+        var canvas = cropper.getCroppedCanvas({ maxWidth: 4000, maxHeight: 4000 });
+        canvas.toBlob(function(blob){
+          if (!blob){ toast('裁剪失败'); return; }
+          var fd = new FormData();
+          fd.append('file', blob, 'crop.png');
+          fetch('/api/upload', { method: 'POST', body: fd }).then(function(r){ return r.json(); }).then(function(res){
+            if (res.errno !== 0){ toast('上传失败'); return; }
+            ed.updateNode(imgNode, { src: res.data.url });
+            closeModal();
+            toast('已替换为裁剪后的图片');
           });
-        };
-        li.appendChild(t); li.appendChild(d);
-        li.onclick = function(){ openPage(p.id); };
-        ul.appendChild(li);
-      });
+        }, 'image/png');
+      };
+    };
+
+    /* 自定义菜单：边框 */
+    function BorderMenu(){
+      this.title = '边框';
+      this.tag = 'select';
+      this.width = 90;
+      this.iconSvg = ICON.border;
+      this.dropPanel = {
+        width: 140,
+        content: [
+          { text: '无边框', value: 'none' },
+          { text: '细 1px', value: '1px' },
+          { text: '中 2px', value: '2px' },
+          { text: '粗 4px', value: '4px' },
+          { text: '自定义…', value: 'custom' }
+        ]
+      };
+    }
+    BorderMenu.prototype.getValue = function(ed){
+      var n = ed.getSelectedNodeByType('image') || ed.getSelectedNodeByType('table');
+      if (n && n.style && n.style.border && n.style.border !== 'none') return n.style.border.split(' ')[0];
+      return 'none';
+    };
+    BorderMenu.prototype.isActive = function(){ return false; };
+    BorderMenu.prototype.isDisabled = function(){ return false; };
+    BorderMenu.prototype.exec = function(ed, value){
+      var node = ed.getSelectedNodeByType('image') || ed.getSelectedNodeByType('table');
+      if (!node){ toast('请先点击选中图片或表格'); return; }
+      var width = null;
+      if (value === 'custom'){
+        var v = window.prompt('请输入边框宽度（px）：', '2');
+        if (v === null) return;
+        width = v + 'px';
+      } else if (value !== 'none') {
+        width = value;
+      }
+      var style = Object.assign({}, node.style || {});
+      if (width){
+        style.border = width + ' solid #9fb3c8';
+        style.borderRadius = '6px';
+      } else {
+        delete style.border;
+        delete style.borderRadius;
+      }
+      ed.updateNode(node, { style: style });
+      toast(width ? '已设置边框 ' + width : '已移除边框');
+    };
+
+    // 注册自定义菜单（必须在 createToolbar 之前）
+    E.Boot.registerMenu({ key: 'menuLink', factory: function(){ return new LinkMenu(); } });
+    E.Boot.registerMenu({ key: 'menuCrop', factory: function(){ return new CropMenu(); } });
+    E.Boot.registerMenu({ key: 'menuBorder', factory: function(){ return new BorderMenu(); } });
+
+    editor = E.createEditor({
+      selector: '#editor-container',
+      html: '<p><br></p>',
+      config: {
+        placeholder: '在这里编辑内容…',
+        MENU_CONF: {
+          uploadImage: {
+            server: '/api/upload',
+            fieldName: 'file',
+            maxFileSize: 200 * 1024 * 1024,
+            allowedFileTypes: ['image/*'],
+            failed: function(err){ toast('图片上传失败: ' + err); }
+          }
+        }
+      },
+      mode: 'default'
+    });
+    E.createToolbar({
+      editor: editor,
+      selector: '#toolbar-container',
+      config: {
+        toolbarKeys: [
+          'headerSelect', 'bold', 'italic', 'underline', 'color', 'bgColor',
+          'bulletedList', 'numberedList', 'todo',
+          'blockquote', 'codeBlock',
+          'insertTable',
+          'menuLink',
+          'insertImage',
+          'menuCrop',
+          'menuBorder',
+          'undo', 'redo'
+        ]
+      },
+      mode: 'default'
     });
   }
 
-  function openPage(id){
-    fetch('/api/pages/' + id).then(function(r){ return r.json(); }).then(function(p){
-      currentId = p.id;
-      document.getElementById('title').value = p.title;
-      editor.setHtml(p.content || '<p><br></p>');
-      Array.prototype.forEach.call(document.querySelectorAll('.page-item'), function(li){
-        li.classList.toggle('active', li.querySelector('.t').textContent === (p.title||'(无标题)'));
-      });
+  /* ============ 操作 ============ */
+  function loadAll(){
+    fetch('/api/nodes').then(function(r){ return r.json(); }).then(function(list){
+      allNodes = list;
+      renderTree();
     });
   }
 
-  function savePage(){
-    var title = document.getElementById('title').value.trim();
-    if(!title){ toast('请先填写标题'); return; }
-    var content = editor.getHtml();
-    var url = currentId ? '/api/pages/' + currentId : '/api/pages';
-    var method = currentId ? 'PUT' : 'POST';
-    fetch(url, {
-      method: method,
+  function currentParent(){
+    var n = currentId ? findNode(currentId) : null;
+    if (n && n.type === 'folder') return n.id;
+    if (n) return n.parent;
+    return '';
+  }
+
+  function createNode(type){
+    var title = window.prompt(type==='folder' ? '文件夹名称：' : '页面标题：', type==='folder' ? '新文件夹' : '新页面');
+    if (!title || !title.trim()) return;
+    fetch('/api/nodes', {
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: title, content: content })
-    }).then(function(r){ return r.json(); }).then(function(p){
-      if(p.error){ toast('保存失败: ' + p.error); return; }
-      currentId = p.id;
-      loadList(); toast('已保存');
+      body: JSON.stringify({ type: type, parent: currentParent(), title: title.trim() })
+    }).then(function(r){ return r.json(); }).then(function(n){
+      if (n.error){ toast('创建失败: ' + n.error); return; }
+      if (type === 'folder'){ expanded[n.id] = true; }
+      loadAll();
+      selectNode(n.id);
+      toast('已创建');
     });
   }
 
-  document.getElementById('btn-new').onclick = function(){
-    currentId = null;
-    document.getElementById('title').value = '';
-    editor.setHtml('<p><br></p>');
-    Array.prototype.forEach.call(document.querySelectorAll('.page-item'), function(li){ li.classList.remove('active'); });
-    document.getElementById('title').focus();
-  };
-  document.getElementById('btn-save').onclick = savePage;
-  document.getElementById('btn-preview').onclick = function(){
-    if(!currentId){ toast('请先保存页面'); return; }
-    window.open('/?p=' + currentId, '_blank');
-  };
-  document.getElementById('title').addEventListener('keydown', function(e){
-    if(e.key === 'Enter') savePage();
-  });
+  function saveNode(){
+    var title = document.getElementById('title').value.trim();
+    if (!title){ toast('请先填写标题'); return; }
+    if (!currentId){ toast('请先选择或新建内容'); return; }
+    var body = { title: title };
+    if (currentType === 'page') body.content = editor.getHtml();
+    fetch('/api/nodes/' + currentId, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function(r){ return r.json(); }).then(function(n){
+      if (n.error){ toast('保存失败: ' + n.error); return; }
+      loadAll(); toast('已保存');
+    });
+  }
 
-  loadList();
+  function uploadAttachment(){
+    var input = document.createElement('input');
+    input.type = 'file';
+    input.onchange = function(){
+      if (!input.files || !input.files[0]) return;
+      var f = input.files[0];
+      var fd = new FormData();
+      fd.append('file', f);
+      toast('上传中…');
+      fetch('/api/upload', { method: 'POST', body: fd }).then(function(r){ return r.json(); }).then(function(res){
+        if (res.errno !== 0){ toast('上传失败'); return; }
+        return fetch('/api/nodes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'file',
+            parent: currentParent(),
+            title: res.data.name,
+            content: res.data.url,
+            fileName: res.data.name,
+            size: res.data.size
+          })
+        });
+      }).then(function(r){ return r ? r.json() : null; }).then(function(n){
+        if (!n || n.error){ toast('上传失败'); return; }
+        loadAll(); toast('附件已上传');
+      });
+    };
+    input.click();
+  }
+
+  document.getElementById('btn-new').onclick = function(){ createNode('page'); };
+  document.getElementById('btn-folder').onclick = function(){ createNode('folder'); };
+  document.getElementById('btn-upload').onclick = uploadAttachment;
+  document.getElementById('btn-save').onclick = saveNode;
+  document.getElementById('btn-preview').onclick = function(){
+    if (!currentId || currentType !== 'page'){ toast('请先选择页面'); return; }
+    saveNode();
+    setTimeout(function(){ window.open('/?p=' + currentId, '_blank'); }, 300);
+  };
+  document.getElementById('title').addEventListener('keydown', function(e){ if (e.key === 'Enter') saveNode(); });
+
+  loadAll();
 })();
 </script>
 </body>
