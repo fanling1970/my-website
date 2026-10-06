@@ -154,6 +154,14 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
   function toast(msg){ statusEl.textContent = msg; clearTimeout(toast._t); toast._t = setTimeout(function(){ statusEl.textContent=''; }, 2500); }
   function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   function childrenOf(id){ return allNodes.filter(function(n){ return n.parent === id; }); }
+  // 树排序：文件夹优先，组内按标题排序，避免保存后节点乱跳
+  function sortKids(list){
+    return list.slice().sort(function(a,b){
+      if (a.type==='folder' && b.type!=='folder') return -1;
+      if (a.type!=='folder' && b.type==='folder') return 1;
+      return (a.title < b.title) ? -1 : (a.title > b.title ? 1 : 0);
+    });
+  }
   function findNode(id){ for (var i=0;i<allNodes.length;i++){ if (allNodes[i].id===id) return allNodes[i]; } return null; }
   function fmtSize(b){
     if (!b) return '';
@@ -177,7 +185,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
   /* ============ 树 ============ */
   function renderTree(){
     var html = '';
-    childrenOf('').forEach(function(n){ html += nodeHTML(n, 0); });
+    sortKids(childrenOf('')).forEach(function(n){ html += nodeHTML(n, 0); });
     document.getElementById('tree').innerHTML = html;
     bindTreeEvents();
   }
@@ -198,7 +206,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     html += '</div>';
     if (kids.length && open){
       html += '<ul>';
-      kids.forEach(function(k){ html += nodeHTML(k, depth+1); });
+      sortKids(kids).forEach(function(k){ html += nodeHTML(k, depth+1); });
       html += '</ul>';
     }
     html += '</li>';
@@ -270,7 +278,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
   function initEditor(){
     var E = window.wangEditor;
 
-    /* 自定义菜单：插入链接 */
+    /* 自定义菜单：插入链接（支持站内页面 + 附件文件，自动填充地址） */
     function LinkMenu(){
       this.title = '插入链接';
       this.tag = 'button';
@@ -280,26 +288,43 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     LinkMenu.prototype.isActive = function(){ return false; };
     LinkMenu.prototype.isDisabled = function(){ return false; };
     LinkMenu.prototype.exec = function(ed){
+      // 先恢复点击菜单前的选区，取选中文字作为默认链接文本
+      ed.restoreSelection();
+      var selText = '';
+      try {
+        var r = ed.selection.getSelectionRange();
+        if (r) selText = (r.toString() || '').trim();
+      } catch(e){}
       var pages = allNodes.filter(function(n){ return n.type === 'page'; });
-      var opts = pages.map(function(p){ return '<option value="' + p.id + '">' + esc(p.title) + '</option>'; }).join('');
+      var files = allNodes.filter(function(n){ return n.type === 'file'; });
+      function optHtml(list, prefix){
+        return list.map(function(p){
+          var url = p.type === 'file' ? p.content : '/?p=' + p.id;
+          return '<option value="' + esc(url) + '">' + esc(prefix + p.title) + '</option>';
+        }).join('');
+      }
+      var opts = '';
+      if (pages.length) opts += '<optgroup label="站内页面">' + optHtml(pages, '📄 ') + '</optgroup>';
+      if (files.length) opts += '<optgroup label="附件 / 软件（自动填下载地址）">' + optHtml(files, '📦 ') + '</optgroup>';
       openModal(
         '<h3>插入链接</h3>'
-        + '<div class="mrow"><label>链接文本（留空则显示地址）</label><input type="text" id="lk-text" placeholder="显示的文字"></div>'
-        + '<div class="mrow"><label>站内页面（选择后自动填充地址）</label><select id="lk-page"><option value="">— 不选，手动填地址 —</option>' + opts + '</select></div>'
-        + '<div class="mrow"><label>链接地址</label><input type="text" id="lk-url" placeholder="http://… 或 /?p=页面ID"></div>'
+        + '<div class="mrow"><label>链接文本（留空则显示地址）</label><input type="text" id="lk-text" value="' + esc(selText) + '" placeholder="显示的文字"></div>'
+        + '<div class="mrow"><label>站内页面 / 附件（选择后自动填充地址）</label><select id="lk-page"><option value="">— 不选，手动填地址 —</option>' + opts + '</select></div>'
+        + '<div class="mrow"><label>链接地址</label><input type="text" id="lk-url" placeholder="http://… 或 /?p=页面ID 或 /files/附件名"></div>'
         + '<div class="mrow"><label>打开方式</label><select id="lk-target"><option value="_blank">新标签页打开</option><option value="_self">当前页打开</option></select></div>'
+        + '<div class="mrow note">提示：附件地址以 /files/ 开头（如上图上传附件后自动生成），手动填时请写完整路径。</div>'
         + '<div class="mbtn-row"><button class="mbtn mbtn-cancel" id="lk-cancel">取消</button><button class="mbtn mbtn-ok" id="lk-ok">确定</button></div>'
       );
       document.getElementById('lk-page').onchange = function(){
         var v = document.getElementById('lk-page').value;
-        if (v) document.getElementById('lk-url').value = '/?p=' + v;
+        if (v) document.getElementById('lk-url').value = v;
       };
       document.getElementById('lk-cancel').onclick = closeModal;
       document.getElementById('lk-ok').onclick = function(){
         var text = document.getElementById('lk-text').value;
         var url = document.getElementById('lk-url').value.trim();
         var target = document.getElementById('lk-target').value;
-        if (!url){ toast('请填写链接地址或选择站内页面'); return; }
+        if (!url){ toast('请填写链接地址或选择站内页面/附件'); return; }
         ed.restoreSelection();
         ed.dangerouslyInsertHtml('<a href="' + esc(url) + '" target="' + target + '">' + esc(text || url) + '</a>');
         closeModal();
@@ -316,8 +341,9 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     CropMenu.prototype.isActive = function(){ return false; };
     CropMenu.prototype.isDisabled = function(){ return false; };
     CropMenu.prototype.exec = function(ed){
+      ed.restoreSelection();
       var imgNode = ed.getSelectedNodeByType('image');
-      if (!imgNode){ toast('请先点击选中一张图片'); return; }
+      if (!imgNode){ toast('请先单击选中一张图片，再点裁剪'); return; }
       openModal(
         '<h3>裁剪图片</h3>'
         + '<div class="crop-box"><img id="crop-img" src="' + esc(imgNode.src) + '" alt=""></div>'
@@ -346,22 +372,19 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       };
     };
 
-    /* 自定义菜单：边框 */
+    /* 自定义菜单：边框（图片/表格） */
     function BorderMenu(){
       this.title = '边框';
       this.tag = 'select';
-      this.width = 90;
+      this.width = 80;
       this.iconSvg = ICON.border;
-      this.dropPanel = {
-        width: 140,
-        content: [
-          { text: '无边框', value: 'none' },
-          { text: '细 1px', value: '1px' },
-          { text: '中 2px', value: '2px' },
-          { text: '粗 4px', value: '4px' },
-          { text: '自定义…', value: 'custom' }
-        ]
-      };
+      this.selectList = [
+        { text: '无边框', value: 'none' },
+        { text: '细 1px', value: '1px' },
+        { text: '中 2px', value: '2px' },
+        { text: '粗 4px', value: '4px' },
+        { text: '自定义…', value: 'custom' }
+      ];
     }
     BorderMenu.prototype.getValue = function(ed){
       var n = ed.getSelectedNodeByType('image') || ed.getSelectedNodeByType('table');
@@ -371,8 +394,9 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     BorderMenu.prototype.isActive = function(){ return false; };
     BorderMenu.prototype.isDisabled = function(){ return false; };
     BorderMenu.prototype.exec = function(ed, value){
+      ed.restoreSelection();
       var node = ed.getSelectedNodeByType('image') || ed.getSelectedNodeByType('table');
-      if (!node){ toast('请先点击选中图片或表格'); return; }
+      if (!node){ toast('请先单击选中图片或表格'); return; }
       var width = null;
       if (value === 'custom'){
         var v = window.prompt('请输入边框宽度（px）：', '2');
@@ -384,13 +408,17 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       var style = Object.assign({}, node.style || {});
       if (width){
         style.border = width + ' solid #9fb3c8';
-        style.borderRadius = '6px';
+        style.borderRadius = '10px';
+        style.boxShadow = '0 2px 10px rgba(31,45,58,.18)';
+        style.padding = '4px';
       } else {
         delete style.border;
         delete style.borderRadius;
+        delete style.boxShadow;
+        delete style.padding;
       }
       ed.updateNode(node, { style: style });
-      toast(width ? '已设置边框 ' + width : '已移除边框');
+      toast(width ? '已设置边框 ' + width + '（圆角）' : '已移除边框');
     };
 
     // 注册自定义菜单（必须在 createToolbar 之前）
@@ -420,14 +448,18 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       selector: '#toolbar-container',
       config: {
         toolbarKeys: [
-          'headerSelect', 'bold', 'italic', 'underline', 'color', 'bgColor',
+          'headerSelect', 'fontSize', 'bold', 'underline', 'italic', 'through',
+          'color', 'bgColor',
           'bulletedList', 'numberedList', 'todo',
+          'indent', 'lineHeight',
           'blockquote', 'codeBlock',
+          'divider',
           'insertTable',
           'menuLink',
           'insertImage',
           'menuCrop',
           'menuBorder',
+          'clearStyle',
           'undo', 'redo'
         ]
       },

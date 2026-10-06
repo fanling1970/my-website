@@ -145,7 +145,8 @@ func (s *Store) Create(n Node) (Node, error) {
 	return n, nil
 }
 
-func (s *Store) Update(id string, n Node) (Node, error) {
+// Update 更新节点。parent 为 nil 时保持原父节点（防止保存时误移位置）
+func (s *Store) Update(id string, n Node, parent *string) (Node, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	old, ok := s.nodes[id]
@@ -154,7 +155,9 @@ func (s *Store) Update(id string, n Node) (Node, error) {
 	}
 	old.Title = n.Title
 	old.Content = n.Content
-	old.Parent = n.Parent
+	if parent != nil {
+		old.Parent = *parent
+	}
 	old.FileName = n.FileName
 	old.Size = n.Size
 	old.UpdatedAt = time.Now()
@@ -267,15 +270,15 @@ func main() {
 	})
 	mux.HandleFunc("PUT /api/nodes/{id}", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			Title   string `json:"title"`
-			Content string `json:"content"`
-			Parent  string `json:"parent"`
+			Title   string  `json:"title"`
+			Content string  `json:"content"`
+			Parent  *string `json:"parent"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, 400, map[string]string{"error": "请求格式错误"})
 			return
 		}
-		n, err := store.Update(r.PathValue("id"), Node{Title: req.Title, Content: req.Content, Parent: req.Parent})
+		n, err := store.Update(r.PathValue("id"), Node{Title: req.Title, Content: req.Content}, req.Parent)
 		if err != nil {
 			writeJSON(w, 404, map[string]string{"error": "not found"})
 			return
