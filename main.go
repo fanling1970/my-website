@@ -8,10 +8,12 @@ import (
 	"embed"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -315,10 +317,21 @@ func main() {
 			kind = "image"
 			subdir = "uploads"
 		}
-		name := time.Now().Format("20060102150405") + "-" + newID()[:8] + ext
 		dir := filesDir
 		if subdir == "uploads" {
 			dir = uploadsDir
+		}
+		name := filepath.Base(header.Filename) // 保留原始文件名（用户要求上传软件不改名）
+		if name == "." || name == string(filepath.Separator) || name == "" {
+			name = "file" + ext
+		}
+		// 重名自动加序号：foo.exe -> foo(1).exe
+		stem := strings.TrimSuffix(name, ext)
+		for i := 1; ; i++ {
+			if _, err := os.Stat(filepath.Join(dir, name)); os.IsNotExist(err) {
+				break
+			}
+			name = fmt.Sprintf("%s(%d)%s", stem, i, ext)
 		}
 		dst, err := os.Create(filepath.Join(dir, name))
 		if err != nil {
@@ -337,7 +350,7 @@ func main() {
 		writeJSON(w, 200, map[string]any{
 			"errno": 0,
 			"data": map[string]any{
-				"url":  "/" + subdir + "/" + name,
+				"url":  "/" + subdir + "/" + url.PathEscape(name),
 				"alt":  header.Filename,
 				"href": "",
 				"kind": kind,
@@ -364,6 +377,7 @@ func main() {
 				return
 			}
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-cache") // 防止浏览器缓存旧版页面，升级后强制刷新
 			_, _ = w.Write(b)
 		}
 	}

@@ -278,6 +278,93 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
   function initEditor(){
     var E = window.wangEditor;
 
+    /* ---- 公共：定位选中节点（不依赖 getFragment/getSelectedNodeByType，CDN 版均不可靠） ---- */
+    function nodeAtPath(ed, path){
+      var node = ed;
+      for (var i=0;i<path.length;i++){
+        if (!node || !node.children) return null;
+        node = node.children[path[i]];
+      }
+      return node;
+    }
+    function findPathBySrc(ed, src){
+      var kids = ed.children || [];
+      for (var i=0;i<kids.length;i++){
+        var p = kids[i];
+        if (p && p.children) for (var j=0;j<p.children.length;j++){
+          if (p.children[j] && p.children[j].type === 'image' && p.children[j].src === src) return [i, j];
+        }
+      }
+      return null;
+    }
+    function findPathByType(ed, type){
+      var kids = ed.children || [];
+      for (var i=0;i<kids.length;i++){
+        var p = kids[i];
+        if (p && p.children) for (var j=0;j<p.children.length;j++){
+          if (p.children[j] && p.children[j].type === type) return [i, j];
+        }
+      }
+      return null;
+    }
+    var lastImgPath = null;   // 最近一次点击选中的图片 path
+    var lastTablePath = null; // 最近一次点击选中的表格 path
+    function initClickTracking(ed){
+      var box = document.getElementById('editor-container');
+      if (!box) return;
+      box.addEventListener('click', function(e){
+        var el = e.target;
+        while (el && el !== box){
+          if (el.tagName === 'IMG'){
+            var p = findPathBySrc(ed, el.getAttribute('src'));
+            if (p) lastImgPath = p;
+            return;
+          }
+          if (el.tagName === 'TABLE'){
+            var tp = findPathByType(ed, 'table');
+            if (tp) lastTablePath = tp;
+            return;
+          }
+          el = el.parentNode;
+        }
+      });
+    }
+    // 获取当前应操作的图片/表格节点：点击记录 > 当前选区 > DOM 选区
+    function getSelectedNode(ed, types){
+      if (types.indexOf('image') >= 0 && lastImgPath){
+        var n1 = nodeAtPath(ed, lastImgPath);
+        if (n1 && n1.type === 'image') return n1;
+      }
+      if (types.indexOf('table') >= 0 && lastTablePath){
+        var n2 = nodeAtPath(ed, lastTablePath);
+        if (n2 && n2.type === 'table') return n2;
+      }
+      try {
+        var sel = ed.selection;
+        if (!sel || !sel.anchor || !sel.anchor.path){ ed.restoreSelection(); sel = ed.selection; }
+        if (sel && sel.anchor && sel.anchor.path){
+          for (var i=sel.anchor.path.length; i>=0; i--){
+            var n = nodeAtPath(ed, sel.anchor.path.slice(0, i));
+            if (n && types.indexOf(n.type) >= 0) return n;
+          }
+        }
+      } catch(e){}
+      try {
+        var s = window.getSelection();
+        if (s && s.rangeCount > 0){
+          var r = s.getRangeAt(0);
+          var el = r.startContainer;
+          if (el.nodeType === 3) el = el.parentNode;
+          while (el && el !== document.body){
+            if (el.tagName === 'IMG' && types.indexOf('image') >= 0) return { type: 'image', src: el.getAttribute('src') };
+            if (el.tagName === 'TABLE' && types.indexOf('table') >= 0) return { type: 'table' };
+            el = el.parentNode;
+          }
+        }
+      } catch(e){}
+      return null;
+    }
+
     /* 自定义菜单：插入链接（支持站内页面 + 附件文件，自动填充地址） */
     function LinkMenu(){
       this.title = '插入链接';
@@ -349,15 +436,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     CropMenu.prototype.isActive = function(){ return false; };
     CropMenu.prototype.isDisabled = function(){ return false; };
     CropMenu.prototype.exec = function(ed){
-      // 获取当前选中的图片节点（用 getFragment，CDN 版无 getSelectedNodeByType）
-      var imgNode = null;
-      try {
-        ed.restoreSelection();
-        var frag = ed.getFragment();
-        if (frag) for (var i=0;i<frag.length;i++){
-          if (frag[i] && frag[i].type === 'image'){ imgNode = frag[i]; break; }
-        }
-      } catch(e){}
+      var imgNode = getSelectedNode(ed, ['image']);
       if (!imgNode || !imgNode.src){ toast('请先单击选中一张图片，再点裁剪'); return; }
       var oldSrc = imgNode.src;
       openModal(
@@ -414,43 +493,38 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
         { text: '自定义…', value: 'custom' }
       ];
     }
+    BorderMenu.prototype.getOptions = function(editor){ return this.selectList; };  // select 菜单必需，缺它会导致工具栏状态刷新报错
     BorderMenu.prototype.getValue = function(ed){
       // 必须在任何选区状态下都不抛错（工具栏状态更新会频繁调用）
       try {
-        var frag = ed.getFragment();
-        if (frag) for (var i=0;i<frag.length;i++){
-          var n = frag[i];
-          if (n && (n.type === 'image' || n.type === 'table') && n.style && n.style.border && n.style.border !== 'none'){
-            return n.style.border.split(' ')[0];
-          }
-        }
+        var n = getSelectedNode(ed, ['image', 'table']);
+        if (n && n.style && n.style.border && n.style.border !== 'none') return n.style.border.split(' ')[0];
       } catch(e){}
       return 'none';
     };
     BorderMenu.prototype.isActive = function(){ return false; };
     BorderMenu.prototype.isDisabled = function(){ return false; };
     // 在 getHtml 的 DOM 副本中定位并修改目标元素样式，再 setHtml 同步回编辑器
-    // targetNode: fragment 中的节点（含 type / src），DOM 选区定位失败时用它兜底
+    // targetNode: 选中的节点（type / src），DOM 副本按特征匹配
     function applyBorderStyle(ed, targetNode, width){
       var targetType = targetNode ? targetNode.type : '';
-      var target = null;
-      try {
-        var s = window.getSelection();
-        if (s && s.rangeCount > 0){
-          var r = s.getRangeAt(0);
-          var n = r.startContainer;
-          if (n.nodeType === 3) n = n.parentNode;
-          while (n && n !== document.body){
-            if (n.tagName === 'IMG' || n.tagName === 'TABLE'){ target = n; break; }
-            n = n.parentNode;
-          }
-        }
-      } catch(e){}
       var matchKey = null;
-      if (target){
-        matchKey = targetType === 'image' ? target.getAttribute('src') : target.outerHTML;
-      } else if (targetNode && targetNode.src){
-        matchKey = targetNode.src; // 兜底：用选区节点里的 src 匹配图片
+      if (targetType === 'image'){
+        var s = window.getSelection();
+        try {
+          if (s && s.rangeCount > 0){
+            var r = s.getRangeAt(0);
+            var el = r.startContainer;
+            if (el.nodeType === 3) el = el.parentNode;
+            while (el && el !== document.body){
+              if (el.tagName === 'IMG'){ matchKey = el.getAttribute('src'); break; }
+              el = el.parentNode;
+            }
+          }
+        } catch(e){}
+        if (!matchKey && targetNode.src) matchKey = targetNode.src;
+      } else {
+        matchKey = 'TABLE'; // 表格：作用到文档中第一个表格（编辑区表格通常唯一）
       }
       if (!matchKey) return '未定位到选中的图片/表格，请单击选中后再试';
       var html = ed.getHtml();
@@ -459,7 +533,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       var found = false;
       var selector = targetType === 'image' ? 'img' : 'table';
       Array.prototype.forEach.call(div.querySelectorAll(selector), function(el){
-        var key = targetType === 'image' ? el.getAttribute('src') : el.outerHTML;
+        var key = targetType === 'image' ? el.getAttribute('src') : 'TABLE';
         if (key !== matchKey) return;
         if (width){
           el.style.border = width + ' solid #9fb3c8';
@@ -476,20 +550,14 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
           el.style.overflow = '';
         }
         found = true;
+        if (targetType !== 'image') return false; // 表格只处理第一个
       });
       if (!found) return '未定位到选中的元素';
       ed.setHtml(div.innerHTML);
       return width ? '已设置边框 ' + width + '（圆角）' : '已移除边框';
     }
     BorderMenu.prototype.exec = function(ed, value){
-      var targetNode = null;
-      try {
-        ed.restoreSelection();
-        var frag = ed.getFragment();
-        if (frag) for (var i=0;i<frag.length;i++){
-          if (frag[i] && (frag[i].type === 'image' || frag[i].type === 'table')){ targetNode = frag[i]; break; }
-        }
-      } catch(e){}
+      var targetNode = getSelectedNode(ed, ['image', 'table']);
       if (!targetNode){ toast('请先单击选中图片或表格'); return; }
       var width = null;
       if (value === 'custom'){
@@ -525,6 +593,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       },
       mode: 'default'
     });
+    initClickTracking(editor);   // 记录点击选中的图片/表格，供裁剪/边框菜单定位
     E.createToolbar({
       editor: editor,
       selector: '#toolbar-container',
