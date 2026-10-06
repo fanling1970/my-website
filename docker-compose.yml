@@ -1,0 +1,16 @@
+# LAN-CMS 路由器部署
+# 用法：在路由器上创建目录后，将本文件放入，执行 docker compose up -d
+# 访问：前台 http://路由器IP:8090    管理后台 http://路由器IP:8090/admin
+services:
+  lan-cms:
+    image: ghcr.io/你的GitHub用户名/lan-cms:latest   # 构建后改成实际镜像地址
+    container_name: lan-cms
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    environment:
+      - PORT=8090
+      - DATA_DIR=/data
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./lan-cms-data:/data

@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>内容管理 - LAN CMS</title>
+<link href="https://cdn.jsdelivr.net/npm/@wangeditor/editor@5.1.23/dist/css/style.css" rel="stylesheet">
+<style>
+:root{--bg:#eef3f7;--card:#fff;--line:#d7e1ea;--ink:#1f2d3a;--ink2:#52606d;--brand:#1b4a6b;--brand2:#0e8aa8;--accent:#e8890c}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--ink);height:100vh;overflow:hidden}
+.app{display:flex;height:100vh}
+/* 左侧菜单 */
+.side{width:260px;flex:none;background:var(--brand);color:#fff;display:flex;flex-direction:column;min-width:0}
+.side-head{padding:16px;display:flex;flex-direction:column;gap:10px;border-bottom:1px solid rgba(255,255,255,.12)}
+.logo{font-size:18px;font-weight:700;letter-spacing:.5px}
+.logo span{color:#46c8d8}
+.btn-new{padding:9px;border:none;border-radius:8px;background:var(--accent);color:#fff;font-size:14px;font-weight:600;cursor:pointer}
+.btn-new:hover{filter:brightness(1.08)}
+.page-list{list-style:none;flex:1;overflow-y:auto;padding:8px}
+.page-item{display:flex;align-items:center;gap:6px;padding:10px 12px;border-radius:8px;cursor:pointer;font-size:14px;color:#d5e3ee}
+.page-item:hover{background:rgba(255,255,255,.08)}
+.page-item.active{background:rgba(255,255,255,.16);color:#fff;font-weight:600}
+.page-item .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.page-item .del{display:none;border:none;background:none;color:#f5a7a7;font-size:15px;cursor:pointer;line-height:1;padding:2px 6px;border-radius:5px}
+.page-item:hover .del{display:block}
+.page-item .del:hover{background:rgba(255,0,0,.15)}
+.side-foot{padding:12px 16px;font-size:12px;color:#9db8cc;border-top:1px solid rgba(255,255,255,.12)}
+.side-foot a{color:#46c8d8;text-decoration:none}
+/* 右侧编辑区 */
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+.editor-head{display:flex;gap:12px;align-items:center;padding:14px 20px;background:var(--card);border-bottom:1px solid var(--line);flex-wrap:wrap}
+#title{flex:1;min-width:220px;border:1px solid var(--line);border-radius:8px;padding:10px 14px;font-size:16px;font-weight:600;color:var(--ink);outline:none}
+#title:focus{border-color:var(--brand2);box-shadow:0 0 0 3px rgba(14,138,168,.12)}
+.actions{display:flex;gap:8px;align-items:center}
+.btn-save{padding:9px 22px;border:none;border-radius:8px;background:var(--brand2);color:#fff;font-size:14px;font-weight:600;cursor:pointer}
+.btn-save:hover{background:#0b7a95}
+.btn-preview{padding:9px 18px;border:1px solid var(--brand2);border-radius:8px;background:#fff;color:var(--brand2);font-size:14px;font-weight:600;cursor:pointer}
+.btn-preview:hover{background:#e8f6fa}
+.status{font-size:12px;color:var(--ink2);min-width:70px}
+#toolbar-container{flex:none;border-bottom:1px solid var(--line)}
+#editor-container{flex:1;overflow-y:auto;margin:0}
+.w-e-text-container{background:var(--card)}
+@media (max-width:700px){
+  body{overflow:auto}
+  .app{flex-direction:column;height:auto;min-height:100vh}
+  .side{width:100%;max-height:38vh}
+  .main{min-height:62vh}
+  #editor-container{height:50vh;overflow-y:auto}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="side-head">
+      <div class="logo">LAN <span>CMS</span></div>
+      <button id="btn-new" class="btn-new">＋ 新建页面</button>
+    </div>
+    <ul id="page-list" class="page-list"></ul>
+    <div class="side-foot"><a href="/" target="_blank">查看前台 →</a></div>
+  </aside>
+  <main class="main">
+    <div class="editor-head">
+      <input id="title" type="text" placeholder="输入页面标题…">
+      <div class="actions">
+        <button id="btn-save" class="btn-save">保存</button>
+        <button id="btn-preview" class="btn-preview">预览</button>
+        <span id="status" class="status"></span>
+      </div>
+    </div>
+    <div id="toolbar-container"></div>
+    <div id="editor-container"><p><br></p></div>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@wangeditor/editor@5.1.23/dist/index.js"></script>
+<script>
+(function(){
+  var currentId = null;
+  var editor = null;
+  var statusEl = document.getElementById('status');
+
+  function toast(msg){ statusEl.textContent = msg; clearTimeout(toast._t); toast._t = setTimeout(function(){ statusEl.textContent=''; }, 2500); }
+
+  // 初始化编辑器
+  var editorConfig = {
+    placeholder: '在这里编辑内容：插入图片、超链接、列表…',
+    MENU_CONF: {
+      uploadImage: {
+        server: '/api/upload',          // 上传接口（后端已实现）
+        fieldName: 'file',
+        maxFileSize: 20 * 1024 * 1024,
+        allowedFileTypes: ['image/*'],
+        failed: function(err, res){ toast('图片上传失败: ' + err); }
+      }
+    }
+  };
+  editor = window.wangEditor.createEditor({
+    selector: '#editor-container',
+    html: '<p><br></p>',
+    config: editorConfig,
+    mode: 'default'
+  });
+  window.wangEditor.createToolbar({ editor: editor, selector: '#toolbar-container', config: {}, mode: 'default' });
+
+  // 页面列表
+  function loadList(){
+    fetch('/api/pages').then(function(r){ return r.json(); }).then(function(list){
+      var ul = document.getElementById('page-list');
+      ul.innerHTML = '';
+      list.forEach(function(p){
+        var li = document.createElement('li');
+        li.className = 'page-item' + (p.id === currentId ? ' active' : '');
+        var t = document.createElement('span'); t.className='t'; t.textContent = p.title || '(无标题)';
+        var d = document.createElement('button'); d.className='del'; d.textContent='×';
+        d.onclick = function(e){
+          e.stopPropagation();
+          if(!confirm('确定删除「' + (p.title||'(无标题)') + '」？')) return;
+          fetch('/api/pages/' + p.id, { method:'DELETE' }).then(function(r){ return r.json(); }).then(function(){
+            if(currentId === p.id){ currentId = null; document.getElementById('title').value=''; editor.setHtml('<p><br></p>'); }
+            loadList(); toast('已删除');
+          });
+        };
+        li.appendChild(t); li.appendChild(d);
+        li.onclick = function(){ openPage(p.id); };
+        ul.appendChild(li);
+      });
+    });
+  }
+
+  function openPage(id){
+    fetch('/api/pages/' + id).then(function(r){ return r.json(); }).then(function(p){
+      currentId = p.id;
+      document.getElementById('title').value = p.title;
+      editor.setHtml(p.content || '<p><br></p>');
+      Array.prototype.forEach.call(document.querySelectorAll('.page-item'), function(li){
+        li.classList.toggle('active', li.querySelector('.t').textContent === (p.title||'(无标题)'));
+      });
+    });
+  }
+
+  function savePage(){
+    var title = document.getElementById('title').value.trim();
+    if(!title){ toast('请先填写标题'); return; }
+    var content = editor.getHtml();
+    var url = currentId ? '/api/pages/' + currentId : '/api/pages';
+    var method = currentId ? 'PUT' : 'POST';
+    fetch(url, {
+      method: method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: title, content: content })
+    }).then(function(r){ return r.json(); }).then(function(p){
+      if(p.error){ toast('保存失败: ' + p.error); return; }
+      currentId = p.id;
+      loadList(); toast('已保存');
+    });
+  }
+
+  document.getElementById('btn-new').onclick = function(){
+    currentId = null;
+    document.getElementById('title').value = '';
+    editor.setHtml('<p><br></p>');
+    Array.prototype.forEach.call(document.querySelectorAll('.page-item'), function(li){ li.classList.remove('active'); });
+    document.getElementById('title').focus();
+  };
+  document.getElementById('btn-save').onclick = savePage;
+  document.getElementById('btn-preview').onclick = function(){
+    if(!currentId){ toast('请先保存页面'); return; }
+    window.open('/?p=' + currentId, '_blank');
+  };
+  document.getElementById('title').addEventListener('keydown', function(e){
+    if(e.key === 'Enter') savePage();
+  });
+
+  loadList();
+})();
+</script>
+</body>
+</html>

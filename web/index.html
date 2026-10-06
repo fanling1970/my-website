@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LAN 内容站</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231b4a6b'/%3E%3Ccircle cx='16' cy='16' r='7' fill='none' stroke='%2346c8d8' stroke-width='3'/%3E%3Ccircle cx='16' cy='16' r='2.5' fill='%23e8890c'/%3E%3C/svg%3E">
+<style>
+:root{--bg:#eef3f7;--card:#fff;--line:#d7e1ea;--ink:#1f2d3a;--ink2:#52606d;--ink3:#7b8794;--brand:#1b4a6b;--brand2:#0e8aa8;--accent:#e8890c}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--ink);line-height:1.7}
+a{color:inherit;text-decoration:none}
+.topbar{background:var(--brand);color:#fff;padding:0 20px}
+.topbar-inner{max-width:900px;margin:0 auto;display:flex;align-items:center;gap:14px;min-height:58px}
+.logo{display:flex;align-items:center;gap:10px;font-size:18px;font-weight:700;cursor:pointer}
+.logo .dot{width:12px;height:12px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 4px rgba(255,255,255,.15)}
+.admin-link{margin-left:auto;font-size:13px;color:#9db8cc}
+.admin-link:hover{color:#fff}
+main{max-width:900px;margin:0 auto;padding:24px 20px 40px}
+/* 列表视图 */
+.list-head{font-size:22px;font-weight:700;margin-bottom:16px}
+.page-list{list-style:none;display:flex;flex-direction:column;gap:10px}
+.page-card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;cursor:pointer;transition:border-color .15s}
+.page-card:hover{border-color:var(--brand2)}
+.page-card .t{font-size:16px;font-weight:700}
+.page-card .m{font-size:12px;color:var(--ink3);margin-top:4px}
+/* 详情视图 */
+.crumb{margin-bottom:14px;font-size:13px}
+.crumb a{color:var(--brand2);font-weight:600}
+.crumb a:hover{text-decoration:underline}
+.article{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:36px 44px}
+.article h1{font-size:26px;font-weight:700;line-height:1.4;margin-bottom:10px}
+.article .meta{font-size:13px;color:var(--ink3);padding-bottom:16px;border-bottom:1px solid var(--line);margin-bottom:22px}
+.article h2{font-size:19px;font-weight:700;margin:26px 0 10px;padding-left:12px;border-left:4px solid var(--brand2)}
+.article h3{font-size:16px;font-weight:700;margin:20px 0 8px}
+.article p{margin-bottom:14px;font-size:15px}
+.article a{color:var(--brand2);font-weight:600}
+.article a:hover{text-decoration:underline}
+.article img{max-width:100%;border:1px solid var(--line);border-radius:8px}
+.article ul,.article ol{margin:0 0 14px 24px;font-size:15px}
+.article li{margin-bottom:6px}
+.article blockquote{border-left:4px solid var(--line);padding:6px 16px;margin:14px 0;color:var(--ink2);background:#f6f9fc;border-radius:0 8px 8px 0}
+.article code{background:#eef2f6;padding:2px 7px;border-radius:5px;font-size:14px;font-family:Consolas,Menlo,monospace}
+.article pre{background:#1f2d3a;color:#e8f0f8;padding:16px;border-radius:8px;overflow-x:auto;margin:14px 0;font-size:13px;font-family:Consolas,Menlo,monospace;line-height:1.6}
+.article table{border-collapse:collapse;width:100%;margin:14px 0}
+.article th,.article td{border:1px solid var(--line);padding:8px 12px;text-align:left;font-size:14px}
+.article th{background:#f6f9fc}
+.back{margin-top:24px;font-size:13px}
+.back a{color:var(--brand2);font-weight:600}
+.empty{padding:60px 20px;text-align:center;color:var(--ink3);font-size:15px}
+footer{max-width:900px;margin:0 auto;padding:0 20px 26px;font-size:12px;color:var(--ink3)}
+@media (max-width:560px){.article{padding:22px 18px}.article h1{font-size:21px}}
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="logo" id="logo"><span class="dot"></span>LAN 内容站</div>
+    <a class="admin-link" href="/admin">管理 →</a>
+  </div>
+</header>
+<main id="main"></main>
+<footer>局域网内容站 · 基于 LAN-CMS</footer>
+
+<script>
+(function(){
+  var main = document.getElementById('main');
+  function esc(s){ return String(s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function fmt(t){ try{ return new Date(t).toLocaleString('zh-CN',{hour12:false}); }catch(e){ return ''; } }
+
+  function renderList(list){
+    if(!list.length){ main.innerHTML = '<div class="empty">还没有内容，去 <a href="/admin" style="color:var(--brand2)">管理后台</a> 发布第一篇吧</div>'; return; }
+    var html = '<div class="list-head">全部内容</div><ul class="page-list">';
+    list.forEach(function(p){
+      html += '<li class="page-card" data-id="' + esc(p.id) + '"><div class="t">' + esc(p.title || '(无标题)') + '</div><div class="m">更新于 ' + fmt(p.updatedAt) + '</div></li>';
+    });
+    html += '</ul>';
+    main.innerHTML = html;
+    Array.prototype.forEach.call(main.querySelectorAll('.page-card'), function(c){
+      c.onclick = function(){ location.href = '/?p=' + c.getAttribute('data-id'); };
+    });
+  }
+
+  function renderDetail(id){
+    fetch('/api/pages/' + id).then(function(r){ return r.json(); }).then(function(p){
+      if(p.error){ main.innerHTML = '<div class="empty">内容不存在或已删除</div>'; return; }
+      main.innerHTML = '<div class="crumb"><a href="/">← 返回列表</a></div>'
+        + '<article class="article"><h1>' + esc(p.title) + '</h1>'
+        + '<div class="meta">更新于 ' + fmt(p.updatedAt) + '</div>'
+        + '<div class="content">' + p.content + '</div></article>'
+        + '<div class="back"><a href="/">← 返回列表</a></div>';
+    });
+  }
+
+  var params = new URLSearchParams(location.search);
+  var pid = params.get('p');
+  if(pid){ renderDetail(pid); }
+  else{ fetch('/api/pages').then(function(r){ return r.json(); }).then(renderList); }
+
+  document.getElementById('logo').onclick = function(){ location.href = '/'; };
+})();
+</script>
+</body>
+</html>
