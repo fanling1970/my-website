@@ -289,26 +289,26 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     LinkMenu.prototype.isDisabled = function(){ return false; };
     LinkMenu.prototype.exec = function(ed){
       // 先恢复点击菜单前的选区，取选中文字作为默认链接文本
-      ed.restoreSelection();
       var selText = '';
       try {
-        var r = ed.selection.getSelectionRange();
-        if (r) selText = (r.toString() || '').trim();
+        ed.restoreSelection();
+        selText = (ed.getSelectionText() || '').trim();
       } catch(e){}
       var pages = allNodes.filter(function(n){ return n.type === 'page'; });
       var files = allNodes.filter(function(n){ return n.type === 'file'; });
       function optHtml(list, prefix){
         return list.map(function(p){
           var url = p.type === 'file' ? p.content : '/?p=' + p.id;
-          return '<option value="' + esc(url) + '">' + esc(prefix + p.title) + '</option>';
+          return '<option value="' + esc(url) + '" data-title="' + esc(p.title) + '">' + esc(prefix + p.title) + '</option>';
         }).join('');
       }
       var opts = '';
       if (pages.length) opts += '<optgroup label="站内页面">' + optHtml(pages, '📄 ') + '</optgroup>';
       if (files.length) opts += '<optgroup label="附件 / 软件（自动填下载地址）">' + optHtml(files, '📦 ') + '</optgroup>';
+      var selectedTitle = '';
       openModal(
         '<h3>插入链接</h3>'
-        + '<div class="mrow"><label>链接文本（留空则显示地址）</label><input type="text" id="lk-text" value="' + esc(selText) + '" placeholder="显示的文字"></div>'
+        + '<div class="mrow"><label>链接文本（选中文字自动填入，留空则用页面标题/文件名）</label><input type="text" id="lk-text" value="' + esc(selText) + '" placeholder="显示的文字"></div>'
         + '<div class="mrow"><label>站内页面 / 附件（选择后自动填充地址）</label><select id="lk-page"><option value="">— 不选，手动填地址 —</option>' + opts + '</select></div>'
         + '<div class="mrow"><label>链接地址</label><input type="text" id="lk-url" placeholder="http://… 或 /?p=页面ID 或 /files/附件名"></div>'
         + '<div class="mrow"><label>打开方式</label><select id="lk-target"><option value="_blank">新标签页打开</option><option value="_self">当前页打开</option></select></div>'
@@ -316,17 +316,25 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
         + '<div class="mbtn-row"><button class="mbtn mbtn-cancel" id="lk-cancel">取消</button><button class="mbtn mbtn-ok" id="lk-ok">确定</button></div>'
       );
       document.getElementById('lk-page').onchange = function(){
-        var v = document.getElementById('lk-page').value;
-        if (v) document.getElementById('lk-url').value = v;
+        var sel = document.getElementById('lk-page');
+        var v = sel.value;
+        if (v){
+          document.getElementById('lk-url').value = v;
+          var opt = sel.options[sel.selectedIndex];
+          selectedTitle = opt ? (opt.getAttribute('data-title') || '') : '';
+        } else {
+          selectedTitle = '';
+        }
       };
       document.getElementById('lk-cancel').onclick = closeModal;
       document.getElementById('lk-ok').onclick = function(){
-        var text = document.getElementById('lk-text').value;
+        var text = document.getElementById('lk-text').value.trim();
         var url = document.getElementById('lk-url').value.trim();
         var target = document.getElementById('lk-target').value;
         if (!url){ toast('请填写链接地址或选择站内页面/附件'); return; }
+        var label = text || selectedTitle || url;
         ed.restoreSelection();
-        ed.dangerouslyInsertHtml('<a href="' + esc(url) + '" target="' + target + '">' + esc(text || url) + '</a>');
+        ed.dangerouslyInsertHtml('<a href="' + esc(url) + '" target="' + target + '">' + esc(label) + '</a>');
         closeModal();
       };
     };
@@ -341,12 +349,20 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     CropMenu.prototype.isActive = function(){ return false; };
     CropMenu.prototype.isDisabled = function(){ return false; };
     CropMenu.prototype.exec = function(ed){
-      ed.restoreSelection();
-      var imgNode = ed.getSelectedNodeByType('image');
-      if (!imgNode){ toast('请先单击选中一张图片，再点裁剪'); return; }
+      // 获取当前选中的图片节点（用 getFragment，CDN 版无 getSelectedNodeByType）
+      var imgNode = null;
+      try {
+        ed.restoreSelection();
+        var frag = ed.getFragment();
+        if (frag) for (var i=0;i<frag.length;i++){
+          if (frag[i] && frag[i].type === 'image'){ imgNode = frag[i]; break; }
+        }
+      } catch(e){}
+      if (!imgNode || !imgNode.src){ toast('请先单击选中一张图片，再点裁剪'); return; }
+      var oldSrc = imgNode.src;
       openModal(
         '<h3>裁剪图片</h3>'
-        + '<div class="crop-box"><img id="crop-img" src="' + esc(imgNode.src) + '" alt=""></div>'
+        + '<div class="crop-box"><img id="crop-img" src="' + esc(oldSrc) + '" alt=""></div>'
         + '<div class="mrow note">拖动选区调整裁剪范围，确定后替换为裁剪结果</div>'
         + '<div class="mbtn-row"><button class="mbtn mbtn-cancel" id="crop-cancel">取消</button><button class="mbtn mbtn-ok" id="crop-ok">确定裁剪</button></div>'
       );
@@ -364,9 +380,21 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
           fd.append('file', blob, 'crop.png');
           fetch('/api/upload', { method: 'POST', body: fd }).then(function(r){ return r.json(); }).then(function(res){
             if (res.errno !== 0){ toast('上传失败'); return; }
-            ed.updateNode(imgNode, { src: res.data.url });
+            // CDN 版无 updateNode：用 getHtml → DOM 副本替换 src → setHtml
+            var html = ed.getHtml();
+            var div = document.createElement('div');
+            div.innerHTML = html;
+            var replaced = false;
+            Array.prototype.forEach.call(div.querySelectorAll('img'), function(im){
+              if (im.getAttribute('src') === oldSrc){ im.setAttribute('src', res.data.url); replaced = true; }
+            });
+            if (replaced){
+              ed.setHtml(div.innerHTML);
+              toast('已替换为裁剪后的图片');
+            } else {
+              toast('未找到原图片，请重新操作');
+            }
             closeModal();
-            toast('已替换为裁剪后的图片');
           });
         }, 'image/png');
       };
@@ -387,16 +415,82 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       ];
     }
     BorderMenu.prototype.getValue = function(ed){
-      var n = ed.getSelectedNodeByType('image') || ed.getSelectedNodeByType('table');
-      if (n && n.style && n.style.border && n.style.border !== 'none') return n.style.border.split(' ')[0];
+      // 必须在任何选区状态下都不抛错（工具栏状态更新会频繁调用）
+      try {
+        var frag = ed.getFragment();
+        if (frag) for (var i=0;i<frag.length;i++){
+          var n = frag[i];
+          if (n && (n.type === 'image' || n.type === 'table') && n.style && n.style.border && n.style.border !== 'none'){
+            return n.style.border.split(' ')[0];
+          }
+        }
+      } catch(e){}
       return 'none';
     };
     BorderMenu.prototype.isActive = function(){ return false; };
     BorderMenu.prototype.isDisabled = function(){ return false; };
+    // 在 getHtml 的 DOM 副本中定位并修改目标元素样式，再 setHtml 同步回编辑器
+    // targetNode: fragment 中的节点（含 type / src），DOM 选区定位失败时用它兜底
+    function applyBorderStyle(ed, targetNode, width){
+      var targetType = targetNode ? targetNode.type : '';
+      var target = null;
+      try {
+        var s = window.getSelection();
+        if (s && s.rangeCount > 0){
+          var r = s.getRangeAt(0);
+          var n = r.startContainer;
+          if (n.nodeType === 3) n = n.parentNode;
+          while (n && n !== document.body){
+            if (n.tagName === 'IMG' || n.tagName === 'TABLE'){ target = n; break; }
+            n = n.parentNode;
+          }
+        }
+      } catch(e){}
+      var matchKey = null;
+      if (target){
+        matchKey = targetType === 'image' ? target.getAttribute('src') : target.outerHTML;
+      } else if (targetNode && targetNode.src){
+        matchKey = targetNode.src; // 兜底：用选区节点里的 src 匹配图片
+      }
+      if (!matchKey) return '未定位到选中的图片/表格，请单击选中后再试';
+      var html = ed.getHtml();
+      var div = document.createElement('div');
+      div.innerHTML = html;
+      var found = false;
+      var selector = targetType === 'image' ? 'img' : 'table';
+      Array.prototype.forEach.call(div.querySelectorAll(selector), function(el){
+        var key = targetType === 'image' ? el.getAttribute('src') : el.outerHTML;
+        if (key !== matchKey) return;
+        if (width){
+          el.style.border = width + ' solid #9fb3c8';
+          el.style.borderRadius = '10px';
+          el.style.boxShadow = '0 2px 10px rgba(31,45,58,.18)';
+          if (targetType === 'image'){ el.style.padding = '4px'; }
+          else { el.style.borderCollapse = 'separate'; el.style.overflow = 'hidden'; }
+        } else {
+          el.style.border = '';
+          el.style.borderRadius = '';
+          el.style.boxShadow = '';
+          el.style.padding = '';
+          el.style.borderCollapse = '';
+          el.style.overflow = '';
+        }
+        found = true;
+      });
+      if (!found) return '未定位到选中的元素';
+      ed.setHtml(div.innerHTML);
+      return width ? '已设置边框 ' + width + '（圆角）' : '已移除边框';
+    }
     BorderMenu.prototype.exec = function(ed, value){
-      ed.restoreSelection();
-      var node = ed.getSelectedNodeByType('image') || ed.getSelectedNodeByType('table');
-      if (!node){ toast('请先单击选中图片或表格'); return; }
+      var targetNode = null;
+      try {
+        ed.restoreSelection();
+        var frag = ed.getFragment();
+        if (frag) for (var i=0;i<frag.length;i++){
+          if (frag[i] && (frag[i].type === 'image' || frag[i].type === 'table')){ targetNode = frag[i]; break; }
+        }
+      } catch(e){}
+      if (!targetNode){ toast('请先单击选中图片或表格'); return; }
       var width = null;
       if (value === 'custom'){
         var v = window.prompt('请输入边框宽度（px）：', '2');
@@ -405,20 +499,8 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       } else if (value !== 'none') {
         width = value;
       }
-      var style = Object.assign({}, node.style || {});
-      if (width){
-        style.border = width + ' solid #9fb3c8';
-        style.borderRadius = '10px';
-        style.boxShadow = '0 2px 10px rgba(31,45,58,.18)';
-        style.padding = '4px';
-      } else {
-        delete style.border;
-        delete style.borderRadius;
-        delete style.boxShadow;
-        delete style.padding;
-      }
-      ed.updateNode(node, { style: style });
-      toast(width ? '已设置边框 ' + width + '（圆角）' : '已移除边框');
+      var msg = applyBorderStyle(ed, targetNode, width);
+      toast(msg);
     };
 
     // 注册自定义菜单（必须在 createToolbar 之前）
