@@ -1,6 +1,7 @@
 // LAN-CMS：局域网轻量内容管理系统
 // v2：树形结构（文件夹/页面/文件），富文本编辑，图片上传/裁剪，附件下载
 // 管理后台: /admin    前台: /
+// 认证: Cookie 会话登录（POST /api/login → lancms_session），退出 GET /logout
 package main
 
 import (
@@ -213,6 +214,51 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 var allowedImageExt = map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".gif": true, ".webp": true}
 
+// ---------- Cookie 会话登录 ----------
+var (
+	sessionMu  sync.Mutex
+	sessions   = map[string]time.Time{} // token -> 过期时间
+	sessionTTL = 7 * 24 * time.Hour
+)
+
+func adminCred() (string, string) {
+	u := os.Getenv("LANCMS_USER")
+	if u == "" {
+		u = "admin"
+	}
+	p := os.Getenv("LANCMS_PASS")
+	if p == "" {
+		p = "admin123"
+	}
+	return u, p
+}
+
+// authMiddleware 保护后台页面与写 API：校验 lancms_session Cookie
+func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if validSession(r) {
+			next(w, r)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			writeJSON(w, 401, map[string]string{"error": "未登录"})
+			return
+		}
+		http.Redirect(w, r, "/login", http.StatusFound)
+	}
+}
+
+func validSession(r *http.Request) bool {
+	c, err := r.Cookie("lancms_session")
+	if err != nil || c.Value == "" {
+		return false
+	}
+	sessionMu.Lock()
+	exp, ok := sessions[c.Value]
+	sessionMu.Unlock()
+	return ok && time.Now().Before(exp)
+}
+
 func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -236,7 +282,7 @@ func main() {
 	mux.HandleFunc("GET /api/nodes", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, store.List())
 	})
-	mux.HandleFunc("POST /api/nodes", basicAuth(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/nodes", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Type    string `json:"type"`
 			Parent  string `json:"parent"`
@@ -270,7 +316,7 @@ func main() {
 		}
 		writeJSON(w, 200, n)
 	})
-	mux.HandleFunc("PUT /api/nodes/{id}", basicAuth(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("PUT /api/nodes/{id}", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Title   string  `json:"title"`
 			Content string  `json:"content"`
@@ -287,7 +333,7 @@ func main() {
 		}
 		writeJSON(w, 200, n)
 	}))
-	mux.HandleFunc("DELETE /api/nodes/{id}", basicAuth(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("DELETE /api/nodes/{id}", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		count, err := store.Delete(r.PathValue("id"))
 		if err != nil {
 			writeJSON(w, 404, map[string]string{"error": "not found"})
@@ -297,7 +343,7 @@ func main() {
 	}))
 
 	// ---------- 文件上传（图片 + 附件）----------
-	mux.HandleFunc("POST /api/upload", basicAuth(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/upload", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 200<<20)
 		if err := r.ParseMultipartForm(200 << 20); err != nil {
 			writeJSON(w, 400, map[string]string{"error": "文件太大或格式错误（最大 200MB）"})
@@ -381,33 +427,42 @@ func main() {
 			_, _ = w.Write(b)
 		}
 	}
-	mux.HandleFunc("GET /admin", basicAuth(servePage("admin.html")))
-	mux.HandleFunc("GET /", servePage("index.html"))
-
-	log.Printf("LAN-CMS v2 已启动: http://0.0.0.0:%s   管理后台: /admin", port)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
-		log.Fatal(err)
-	}
-}
-
-// basicAuth 用 HTTP Basic Auth 保护后台页面与写操作。
-// 用户名/密码来自环境变量 LANCMS_USER / LANCMS_PASS，缺省为 admin / admin123。
-func basicAuth(next http.HandlerFunc) http.HandlerFunc {
-	user := os.Getenv("LANCMS_USER")
-	if user == "" {
-		user = "admin"
-	}
-	pass := os.Getenv("LANCMS_PASS")
-	if pass == "" {
-		pass = "admin123"
-	}
-	return func(w http.ResponseWriter, r *http.Request) {
-		u, p, ok := r.BasicAuth()
-		if !ok || u != user || p != pass {
-			w.Header().Set("WWW-Authenticate", `Basic realm="秋风小站管理后台"`)
-			http.Error(w, "未授权，请输入用户名和密码", http.StatusUnauthorized)
+	// ---------- 登录 / 退出 / 会话 ----------
+	mux.HandleFunc("GET /login", servePage("login.html"))
+	mux.HandleFunc("POST /api/login", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		user, pass := adminCred()
+		if r.FormValue("username") != user || r.FormValue("password") != pass {
+			http.Redirect(w, r, "/login?err=1", http.StatusFound)
 			return
 		}
-		next(w, r)
+		token := newID()
+		sessionMu.Lock()
+		sessions[token] = time.Now().Add(sessionTTL)
+		sessionMu.Unlock()
+		http.SetCookie(w, &http.Cookie{
+			Name: "lancms_session", Value: token, Path: "/",
+			HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: int(sessionTTL.Seconds()),
+		})
+		http.Redirect(w, r, "/admin", http.StatusFound)
+	})
+	mux.HandleFunc("GET /logout", func(w http.ResponseWriter, r *http.Request) {
+		if c, err := r.Cookie("lancms_session"); err == nil {
+			sessionMu.Lock()
+			delete(sessions, c.Value)
+			sessionMu.Unlock()
+		}
+		http.SetCookie(w, &http.Cookie{Name: "lancms_session", Value: "", Path: "/", MaxAge: -1})
+		http.Redirect(w, r, "/", http.StatusFound)
+	})
+	mux.HandleFunc("GET /api/session", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]bool{"ok": true})
+	}))
+	mux.HandleFunc("GET /admin", authMiddleware(servePage("admin.html")))
+	mux.HandleFunc("GET /", servePage("index.html"))
+
+	log.Printf("LAN-CMS v2 已启动: http://0.0.0.0:%s   管理后台: /admin (登录: /login)", port)
+	if err := http.ListenAndServe(":"+port, mux); err != nil {
+		log.Fatal(err)
 	}
 }

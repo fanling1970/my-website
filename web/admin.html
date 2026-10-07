@@ -1050,9 +1050,8 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
   document.getElementById('btn-logout').onclick = function(e){
     e.preventDefault();
     if (!confirm('确定退出登录吗？')){ return; }
-    // 用错误凭据导航一次（地址栏导航，浏览器会发送并覆盖缓存的登录凭据），
-    // 返回首页；之后访问 /admin 会要求重新输入用户名密码
-    location.href = '//logout:logout@' + location.host + '/';
+    // 服务端清除会话 Cookie 后跳转首页；之后访问 /admin 会要求重新登录
+    location.href = '/logout';
   };
   document.getElementById('btn-save').onclick = saveNode;
   document.getElementById('btn-preview').onclick = function(){
@@ -1061,6 +1060,16 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     setTimeout(function(){ window.open('/?p=' + currentId, '_blank'); }, 300);
   };
   document.getElementById('title').addEventListener('keydown', function(e){ if (e.key === 'Enter') saveNode(); });
+
+  /* 会话校验：未登录跳转登录页（含浏览器后退从缓存恢复后台页面的场景） */
+  function requireSession(){
+    fetch('/api/session').then(function(r){
+      if (r.status === 401){ location.href = '/login'; return null; }
+      return r.json();
+    });
+  }
+  requireSession();
+  window.addEventListener('pageshow', function(e){ if (e.persisted) requireSession(); });
 
   loadAll();
 })();
