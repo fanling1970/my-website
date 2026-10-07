@@ -143,6 +143,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     border: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 15h8M9 8v8M15 8v8"/></svg>',
     net: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14 0 18M12 3c-3 3.5-3 14 0 18"/></svg>',
     card: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 10h18M7 15h4"/></svg>',
+    face: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5s1.5 2 3.5 2 3.5-2 3.5-2M9 9.5h.01M15 9.5h.01"/></svg>',
     dl: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v12M6 9l6 6 6-6"/><path d="M4 19h16"/></svg>'
   };
 
@@ -412,18 +413,27 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       for (var i=0;i<hs.length;i++){ if (hs[i] === hEl){ idx = i; break; } }
       if (idx < 0) return;
       var level = hEl.tagName === 'H2' ? 2 : (hEl.tagName === 'H5' ? 5 : 3);
-      var title = (hEl.textContent || '').replace(/^[\uD800-\uDBFF][\uDC00-\uDFFF]\s*/, '');  // 去掉前缀 emoji
+      var rawTitle = hEl.textContent || '';
+      var em = rawTitle.match(/^([\uD800-\uDBFF][\uDC00-\uDFFF])\s*/);
+      var curIcon = em ? em[1] : '🖥';
+      var title = em ? rawTitle.slice(em[0].length) : rawTitle;
       var desc = '';
       var link = '';
       var s1 = hEl.nextElementSibling;
       if (s1 && s1.tagName === 'P'){ desc = (s1.textContent || '').trim(); var s2 = s1.nextElementSibling; if (s2 && s2.tagName === 'P'){ var a = s2.querySelector('a'); if (a) link = a.getAttribute('href') || ''; } }
+      function iconOpt(v, label){
+        return '<option value="' + v + '"' + (v === curIcon ? ' selected' : '') + '>' + label + '</option>';
+      }
+      var iconList = ['🖥','📄','🔗','📦','🌐','⚙️','🖼','📁'];
+      var extraIcon = iconList.indexOf(curIcon) < 0 ? '<option value="' + curIcon + '" selected>' + curIcon + ' 当前图标</option>' : '';
       openModal(
         '<h3>编辑链接框</h3>'
         + '<div class="mrow"><label>标题（可加图标 emoji）</label><input type="text" id="cd-title" value="' + esc(title) + '" placeholder="例如：路由器管理"></div>'
         + '<div class="mrow"><label>图标</label><select id="cd-icon">'
-        + '<option value="🖥">🖥 服务器/系统</option><option value="📄">📄 文档</option><option value="🔗">🔗 链接</option>'
-        + '<option value="📦">📦 软件</option><option value="🌐">🌐 网站</option><option value="⚙️">⚙️ 设置</option>'
-        + '<option value="🖼">🖼 图片</option><option value="📁">📁 文件夹</option>'
+        + extraIcon
+        + iconOpt('🖥', '🖥 服务器/系统') + iconOpt('📄', '📄 文档') + iconOpt('🔗', '🔗 链接')
+        + iconOpt('📦', '📦 软件') + iconOpt('🌐', '🌐 网站') + iconOpt('⚙️', '⚙️ 设置')
+        + iconOpt('🖼', '🖼 图片') + iconOpt('📁', '📁 文件夹')
         + '</select></div>'
         + '<div class="mrow"><label>介绍</label><input type="text" id="cd-desc" value="' + esc(desc) + '" placeholder="一句话介绍"></div>'
         + '<div class="mrow"><label>链接地址</label><input type="text" id="cd-link" value="' + esc(link) + '" placeholder="http://... 或 /?p=页面ID 或 /files/附件名"></div>'
@@ -865,9 +875,44 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       } catch(e){ toast('插入失败: ' + e.message); }
     };
 
+    /* 自定义菜单：插入图标（emoji），在光标处插入到文字前面 */
+    function IconMenu(){
+      this.title = '插入图标';
+      this.tag = 'select';
+      this.width = 88;
+      this.iconSvg = ICON.face;
+      this.selectList = [
+        { text: '🖥 服务器', value: '🖥' },
+        { text: '📄 文档', value: '📄' },
+        { text: '🔗 链接', value: '🔗' },
+        { text: '📦 软件', value: '📦' },
+        { text: '🌐 网站', value: '🌐' },
+        { text: '⚙️ 设置', value: '⚙️' },
+        { text: '🖼 图片', value: '🖼' },
+        { text: '📁 文件夹', value: '📁' },
+        { text: '⭐ 常用', value: '⭐' },
+        { text: '📺 影视', value: '📺' },
+        { text: '🎵 音乐', value: '🎵' },
+        { text: '🎮 游戏', value: '🎮' },
+        { text: '📚 学习', value: '📚' },
+        { text: '🛒 购物', value: '🛒' },
+        { text: '📧 邮箱', value: '📧' },
+        { text: '🔒 安全', value: '🔒' }
+      ];
+    }
+    IconMenu.prototype.getOptions = function(editor){ return this.selectList; };
+    IconMenu.prototype.getValue = function(){ return ''; };
+    IconMenu.prototype.isActive = function(){ return false; };
+    IconMenu.prototype.isDisabled = function(){ return false; };
+    IconMenu.prototype.exec = function(ed, value){
+      if (!value) return;
+      try { ed.insertText(value + ' '); } catch(e){ toast('插入失败: ' + e.message); }
+    };
+
     // 注册自定义菜单（必须在 createToolbar 之前）
     E.Boot.registerMenu({ key: 'menuLink', factory: function(){ return new LinkMenu(); } });
     E.Boot.registerMenu({ key: 'menuCard', factory: function(){ return new CardMenu(); } });
+    E.Boot.registerMenu({ key: 'menuIcon', factory: function(){ return new IconMenu(); } });
     E.Boot.registerMenu({ key: 'menuNetImg', factory: function(){ return new NetImgMenu(); } });
 
     editor = E.createEditor({
@@ -907,6 +952,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
           'divider',
           'menuLink',
           'menuCard',
+          'menuIcon',
           'uploadImage', 'menuNetImg',
           'clearStyle',
           'undo', 'redo'

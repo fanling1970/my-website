@@ -181,19 +181,24 @@ footer{max-width:900px;margin:0 auto;padding:0 20px 26px;font-size:12px;color:va
   function cardify(){
     var c = document.querySelector('.article .content');
     if (!c) return;
+    var kids = Array.prototype.slice.call(c.children);
     var items = [];
-    Array.prototype.forEach.call(c.children, function(el){
+    var i = 0;
+    while (i < kids.length){
+      var el = kids[i];
       if (/^H[235]$/.test(el.tagName)){
         var s1 = el.nextElementSibling, s2 = s1 && s1.nextElementSibling;
         if (s1 && s1.tagName === 'P' && s2 && s2.tagName === 'P' && s2.querySelector('a')){
           items.push({ h: el, s1: s1, s2: s2, size: el.tagName });
-          return;
+          i += 3; // 跳过卡片的 标题+介绍+链接 三块
+          continue;
         }
       }
       // 空段落（<p><br></p> 或空白）是编辑器自动产生的换行，不打断卡片组
-      if (el.tagName === 'P' && (el.innerHTML === '<br>' || (el.textContent || '').trim() === '')){ return; }
+      if (el.tagName === 'P' && (el.innerHTML === '<br>' || (el.textContent || '').trim() === '')){ i++; continue; }
       items.push(null); // 其他内容（分类标题/正文等）打断卡片组
-    });
+      i++;
+    }
     var groups = [], cur = null;
     items.forEach(function(it){
       if (!it){ cur = null; return; }
