@@ -435,7 +435,12 @@ func main() {
 	// ---------- 登录 / 退出 / 会话 ----------
 	mux.HandleFunc("GET /login", servePage("login.html", "no-cache"))
 	mux.HandleFunc("POST /api/login", func(w http.ResponseWriter, r *http.Request) {
-		_ = r.ParseForm()
+		// 浏览器用 FormData(multipart) 提交，必须 ParseMultipartForm 才能读到字段；
+		// 该方法内部对 urlencoded 表单也会自动调用 ParseForm
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			writeJSON(w, 200, map[string]bool{"ok": false})
+			return
+		}
 		user, pass := adminCred()
 		if r.FormValue("username") != user || r.FormValue("password") != pass {
 			writeJSON(w, 200, map[string]bool{"ok": false})
