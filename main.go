@@ -237,6 +237,9 @@ func adminCred() (string, string) {
 func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if validSession(r) {
+			// no-store 防止后台页面被浏览器内存缓存(BFCache)：
+			// 退出后按后退键会重新请求服务器，未登录则跳转登录页，而不是恢复缓存的后台页面
+			w.Header().Set("Cache-Control", "no-store")
 			next(w, r)
 			return
 		}
@@ -415,7 +418,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("加载前端资源失败: %v", err)
 	}
-	servePage := func(name string) http.HandlerFunc {
+	servePage := func(name string, cache string) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			b, err := fs.ReadFile(webSub, name)
 			if err != nil {
@@ -423,12 +426,14 @@ func main() {
 				return
 			}
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.Header().Set("Cache-Control", "no-cache") // 防止浏览器缓存旧版页面，升级后强制刷新
+			if cache != "" {
+				w.Header().Set("Cache-Control", cache) // 后台页 no-store 防 BFCache；前台 no-cache 防旧版缓存
+			}
 			_, _ = w.Write(b)
 		}
 	}
 	// ---------- 登录 / 退出 / 会话 ----------
-	mux.HandleFunc("GET /login", servePage("login.html"))
+	mux.HandleFunc("GET /login", servePage("login.html", "no-cache"))
 	mux.HandleFunc("POST /api/login", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		user, pass := adminCred()
@@ -458,8 +463,8 @@ func main() {
 	mux.HandleFunc("GET /api/session", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]bool{"ok": true})
 	}))
-	mux.HandleFunc("GET /admin", authMiddleware(servePage("admin.html")))
-	mux.HandleFunc("GET /", servePage("index.html"))
+	mux.HandleFunc("GET /admin", authMiddleware(servePage("admin.html", "no-store")))
+	mux.HandleFunc("GET /", servePage("index.html", "no-cache"))
 
 	log.Printf("LAN-CMS v2 已启动: http://0.0.0.0:%s   管理后台: /admin (登录: /login)", port)
 	if err := http.ListenAndServe(":"+port, mux); err != nil {
