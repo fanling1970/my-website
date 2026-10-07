@@ -15,5 +15,9 @@ services:
       # 账号为注册制：首次访问 /login 会显示注册表单，注册的管理员账号保存在 data/auth.json。
       # 无需（也不建议）设置 LANCMS_USER/LANCMS_PASS 环境变量；
       # 若旧版本曾设置过这两个变量，升级后首次启动会自动迁移为注册账号，原密码继续有效。
+      #
+      # 可选：数据加密。设置 LANCMS_KEY 后 nodes.json/pages.json 以密文存储（文件管理器打开是乱码）。
+      # 密钥必须妥善保存，丢失后数据无法恢复；不设置则保持明文（兼容旧数据）。
+      # - LANCMS_KEY=请填写一串随机的长字符串
     volumes:
       - ./lan-cms-data:/data

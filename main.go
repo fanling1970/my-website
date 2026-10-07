@@ -5,6 +5,9 @@
 package main
 
 import (
+	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
 	"embed"
@@ -63,18 +66,58 @@ func NewStore(dir string) (*Store, error) {
 		return nil, err
 	}
 	s := &Store{dir: dir, path: filepath.Join(dir, "nodes.json"), nodes: map[string]Node{}}
+	if encKey != nil {
+		encryptLegacyPages(dir)
+	}
 	if _, err := os.Stat(s.path); os.IsNotExist(err) {
 		s.migrateLegacy()
 	}
 	if b, err := os.ReadFile(s.path); err == nil {
 		var list []Node
-		if json.Unmarshal(b, &list) == nil {
-			for _, n := range list {
-				s.nodes[n.ID] = n
+		migrated := false
+		if encKey != nil {
+			if bytes.HasPrefix(b, encMagic) {
+				plain, derr := decryptData(b)
+				if derr != nil {
+					// 密文但密钥不对：立即停止，绝不覆盖原数据
+					return nil, fmt.Errorf("nodes.json 解密失败（请检查 LANCMS_KEY 是否正确），已停止以避免覆盖数据")
+				}
+				b = plain
+			} else {
+				migrated = true // 无标记：明文旧数据，加载成功后加密写回
 			}
+		}
+		if json.Unmarshal(b, &list) != nil {
+			if encKey != nil {
+				return nil, fmt.Errorf("nodes.json 无法解析（密钥不匹配或文件损坏），已停止以避免覆盖数据")
+			}
+			return s, nil // 无密钥且非 JSON：保持原文件不动
+		}
+		for _, n := range list {
+			s.nodes[n.ID] = n
+		}
+		if migrated {
+			_ = s.persistLocked() // 明文 → 密文迁移
 		}
 	}
 	return s, nil
+}
+
+// encryptLegacyPages 旧版 pages.json 遗留文件：有密钥时加密，防止明文残留
+func encryptLegacyPages(dir string) {
+	pp := filepath.Join(dir, "pages.json")
+	b, err := os.ReadFile(pp)
+	if err != nil {
+		return
+	}
+	if bytes.HasPrefix(b, encMagic) {
+		return // 已是密文
+	}
+	enc, err := encryptData(b)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(pp, enc, 0o644)
 }
 
 // migrateLegacy 兼容旧版 pages.json：全部转为根级 page 节点
@@ -109,6 +152,12 @@ func (s *Store) persistLocked() error {
 	b, err := json.MarshalIndent(list, "", "  ")
 	if err != nil {
 		return err
+	}
+	if encKey != nil {
+		b, err = encryptData(b)
+		if err != nil {
+			return err
+		}
 	}
 	tmp := s.path + ".tmp"
 	if err := os.WriteFile(tmp, b, 0o644); err != nil {
@@ -242,6 +291,54 @@ func parseFormCompat(r *http.Request) {
 	}
 }
 
+// ---------- nodes.json 磁盘加密（AES-256-GCM） ----------
+// 设置环境变量 LANCMS_KEY 后，数据文件在磁盘上以密文存储，文件管理器里打开只见乱码；
+// 未设置时保持明文（兼容旧数据）。密钥必须妥善保存，丢失后数据无法恢复。
+var encKey []byte // 32 字节 AES 密钥；nil = 不加密
+
+// encMagic 密文文件版本标记：密文以该前缀开头，用于与明文旧数据区分（防止错误密钥误迁移锁死数据）
+var encMagic = []byte("LANCMS-ENC-1:")
+
+func encryptData(plain []byte) ([]byte, error) {
+	block, err := aes.NewCipher(encKey)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, err
+	}
+	sealed := gcm.Seal(nonce, nonce, plain, nil)
+	out := make([]byte, 0, len(encMagic)+len(sealed))
+	out = append(out, encMagic...)
+	out = append(out, sealed...)
+	return out, nil
+}
+
+func decryptData(ct []byte) ([]byte, error) {
+	if !bytes.HasPrefix(ct, encMagic) {
+		return nil, fmt.Errorf("非密文数据")
+	}
+	body := ct[len(encMagic):]
+	block, err := aes.NewCipher(encKey)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	if len(body) < gcm.NonceSize() {
+		return nil, fmt.Errorf("密文长度不足")
+	}
+	nonce, payload := body[:gcm.NonceSize()], body[gcm.NonceSize():]
+	return gcm.Open(nil, nonce, payload, nil)
+}
+
 func loadAuth() (authInfo, bool) {
 	b, err := os.ReadFile(authPath)
 	if err != nil {
@@ -325,6 +422,12 @@ func main() {
 	dataDir := os.Getenv("DATA_DIR")
 	if dataDir == "" {
 		dataDir = "/data"
+	}
+	// 数据加密：设置 LANCMS_KEY 后 nodes.json/pages.json 以密文存储（必须在 NewStore 之前初始化）
+	if k := os.Getenv("LANCMS_KEY"); k != "" {
+		sum := sha256.Sum256([]byte(k))
+		encKey = sum[:]
+		log.Printf("数据文件加密已启用（LANCMS_KEY），nodes.json 将以密文存储")
 	}
 
 	store, err := NewStore(dataDir)
