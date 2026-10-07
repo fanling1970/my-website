@@ -291,13 +291,40 @@ func parseFormCompat(r *http.Request) {
 	}
 }
 
-// ---------- nodes.json 磁盘加密（AES-256-GCM） ----------
-// 设置环境变量 LANCMS_KEY 后，数据文件在磁盘上以密文存储，文件管理器里打开只见乱码；
-// 未设置时保持明文（兼容旧数据）。密钥必须妥善保存，丢失后数据无法恢复。
+// ---------- nodes.json 磁盘加密（AES-256-GCM，密钥自动管理） ----------
+// 密钥由程序自动生成并保存在数据目录 .lancms-key 文件中，无需用户配置或记忆；
+// nodes.json/pages.json 在磁盘上以密文存储，文件管理器里打开只见乱码。
+// 备份数据时请连同数据目录一起备份（含 .lancms-key），单独拷走 nodes.json 将无法解密。
 var encKey []byte // 32 字节 AES 密钥；nil = 不加密
 
 // encMagic 密文文件版本标记：密文以该前缀开头，用于与明文旧数据区分（防止错误密钥误迁移锁死数据）
 var encMagic = []byte("LANCMS-ENC-1:")
+
+// loadOrCreateKey 加载或生成数据加密密钥：
+// 优先使用数据目录 .lancms-key（自动生成）；兼容旧版设置过 LANCMS_KEY 环境变量的用户，自动迁移到密钥文件
+func loadOrCreateKey(dir string) ([]byte, error) {
+	kp := filepath.Join(dir, ".lancms-key")
+	if b, err := os.ReadFile(kp); err == nil && len(b) >= 32 {
+		return b[:32], nil
+	}
+	if k := os.Getenv("LANCMS_KEY"); k != "" {
+		sum := sha256.Sum256([]byte(k))
+		key := sum[:]
+		if err := os.WriteFile(kp, key, 0o600); err != nil {
+			return nil, err
+		}
+		log.Printf("已使用 LANCMS_KEY 生成密钥文件 .lancms-key，之后可删除该环境变量")
+		return key, nil
+	}
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(kp, key, 0o600); err != nil {
+		return nil, err
+	}
+	return key, nil
+}
 
 func encryptData(plain []byte) ([]byte, error) {
 	block, err := aes.NewCipher(encKey)
@@ -423,12 +450,16 @@ func main() {
 	if dataDir == "" {
 		dataDir = "/data"
 	}
-	// 数据加密：设置 LANCMS_KEY 后 nodes.json/pages.json 以密文存储（必须在 NewStore 之前初始化）
-	if k := os.Getenv("LANCMS_KEY"); k != "" {
-		sum := sha256.Sum256([]byte(k))
-		encKey = sum[:]
-		log.Printf("数据文件加密已启用（LANCMS_KEY），nodes.json 将以密文存储")
+	// 数据加密：密钥自动生成并存于数据目录 .lancms-key，无需配置；必须在 NewStore 之前初始化
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		log.Fatalf("创建数据目录失败: %v", err)
 	}
+	key, kerr := loadOrCreateKey(dataDir)
+	if kerr != nil {
+		log.Fatalf("初始化数据加密密钥失败: %v", kerr)
+	}
+	encKey = key
+	log.Printf("数据文件加密已启用（密钥自动管理于 data/.lancms-key）")
 
 	store, err := NewStore(dataDir)
 	if err != nil {

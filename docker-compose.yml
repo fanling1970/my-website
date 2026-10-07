@@ -16,8 +16,8 @@ services:
       # 无需（也不建议）设置 LANCMS_USER/LANCMS_PASS 环境变量；
       # 若旧版本曾设置过这两个变量，升级后首次启动会自动迁移为注册账号，原密码继续有效。
       #
-      # 可选：数据加密。设置 LANCMS_KEY 后 nodes.json/pages.json 以密文存储（文件管理器打开是乱码）。
-      # 密钥必须妥善保存，丢失后数据无法恢复；不设置则保持明文（兼容旧数据）。
-      # - LANCMS_KEY=请填写一串随机的长字符串
+      # 数据文件自动加密：nodes.json/pages.json 在磁盘上是密文（文件管理器打开是乱码），
+      # 密钥由程序自动生成并存于数据目录 .lancms-key，无需任何配置，也无需记忆。
+      # 备份时请连同数据目录一起备份（含 .lancms-key）。
     volumes:
       - ./lan-cms-data:/data
