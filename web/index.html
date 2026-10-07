@@ -168,7 +168,16 @@ footer{max-width:900px;margin:0 auto;padding:0 20px 26px;font-size:12px;color:va
   }
 
   function renderPage(pid){
-    fetch(location.protocol + '//' + location.host + '/api/nodes/' + pid).then(function(r){ return r.json(); }).then(function(n){
+    fetch(location.protocol + '//' + location.host + '/api/nodes/' + pid).then(function(r){
+      if (r.status === 401){
+        // 仅登录可见页面：未登录访问时提示登录
+        main.innerHTML = '<div class="empty">该页面需要登录后才能查看</div>'
+          + '<div class="back" style="text-align:center"><a class="fbtn" href="/login">前往登录 →</a></div>';
+        return null;
+      }
+      return r.json();
+    }).then(function(n){
+      if (!n) return;
       if (n.error){ main.innerHTML = '<div class="empty">内容不存在或已删除</div>'; return; }
       main.innerHTML = '<div class="crumb"><a href="/">← 返回列表</a></div>'
         + '<article class="article"><h1>' + esc(n.title) + '</h1>'

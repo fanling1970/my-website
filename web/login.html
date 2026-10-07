@@ -19,17 +19,19 @@
   button:disabled{opacity:.6;cursor:wait}
   .back{display:inline-block;margin-top:18px;font-size:13px;color:#8aa0b0;text-decoration:none}
   .back:hover{color:#0d4a63}
+  #cf{display:none}
 </style>
 </head>
 <body>
-  <form class="login-box" method="post" action="/api/login" autocomplete="off">
+  <form class="login-box" method="post" autocomplete="off">
     <div class="logo">秋</div>
     <h1>秋风小站</h1>
-    <p class="sub">管理后台登录</p>
-    <!-- 字段名先随机化，防止浏览器自动填充已保存的账号密码；提交时恢复为标准名 -->
+    <p class="sub" id="sub">管理后台登录</p>
+    <!-- 字段名先随机化，防止浏览器自动填充；提交时恢复为标准名 -->
     <input type="text" id="u" name="l_u_9x" placeholder="用户名" autocomplete="off" required>
     <input type="text" id="p" name="l_p_7k" placeholder="密码" autocomplete="off" style="-webkit-text-security:disc" required>
-    <p class="err">用户名或密码错误，请重试</p>
+    <input type="text" id="cf" name="l_c_4m" placeholder="再次输入密码" autocomplete="off" style="-webkit-text-security:disc">
+    <p class="err" id="err">操作失败，请重试</p>
     <button type="submit" id="btn">登 录</button>
     <a class="back" href="/">← 返回首页</a>
   </form>
@@ -38,32 +40,53 @@
       var form = document.querySelector('.login-box');
       var u = document.getElementById('u');
       var p = document.getElementById('p');
-      var err = document.querySelector('.err');
+      var cf = document.getElementById('cf');
+      var err = document.getElementById('err');
       var btn = document.getElementById('btn');
+      var sub = document.getElementById('sub');
+      var mode = 'login'; // login | register
+      function showErr(msg){
+        err.textContent = msg || '操作失败，请重试';
+        err.style.display = 'block';
+      }
+      // 检测是否已注册：未注册显示注册表单
+      fetch('/api/auth-status').then(function(r){ return r.json(); }).then(function(d){
+        if (!d.registered){
+          mode = 'register';
+          sub.textContent = '首次使用，请注册管理员账号';
+          cf.style.display = 'block';
+          btn.textContent = '注册并进入';
+        }
+      });
       form.addEventListener('submit', function(e){
         e.preventDefault();
         err.style.display = 'none';
-        // 提交时恢复标准字段名，服务端按 username/password 取值
+        var endpoint = mode === 'register' ? '/api/register' : '/api/login';
         u.name = 'username';
         p.name = 'password';
+        cf.name = 'confirm';
         btn.disabled = true;
-        btn.textContent = '登录中…';
-        fetch('/api/login', { method: 'POST', body: new FormData(form) }).then(function(r){
+        btn.textContent = '请稍候…';
+        fetch(endpoint, { method: 'POST', body: new FormData(form) }).then(function(r){
           return r.json();
         }).then(function(d){
           btn.disabled = false;
-          btn.textContent = '登 录';
+          btn.textContent = mode === 'register' ? '注册并进入' : '登 录';
           if (d.ok){
-            // replace 替换当前登录页历史记录：登录页不进浏览器历史，退出后按后退不会回到这里
             location.replace('/admin');
+          } else if (d.needRegister){
+            mode = 'register';
+            sub.textContent = '首次使用，请注册管理员账号';
+            cf.style.display = 'block';
+            btn.textContent = '注册并进入';
+            showErr('还没有账号，请先注册');
           } else {
-            err.style.display = 'block';
+            showErr(d.err || '用户名或密码错误，请重试');
           }
         }).catch(function(){
           btn.disabled = false;
-          btn.textContent = '登 录';
-          err.textContent = '网络错误，请重试';
-          err.style.display = 'block';
+          btn.textContent = mode === 'register' ? '注册并进入' : '登 录';
+          showErr('网络错误，请重试');
         });
       });
     })();

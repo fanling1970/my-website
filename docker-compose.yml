@@ -3,7 +3,7 @@
 # 访问：前台 http://路由器IP:8090    管理后台 http://路由器IP:8090/admin
 services:
   lan-cms:
-    image: ghcr.io/你的GitHub用户名/lan-cms:latest   # 构建后改成实际镜像地址
+    image: ghcr.io/fanling1970/my-website:latest
     container_name: lan-cms
     restart: unless-stopped
     ports:
@@ -12,5 +12,8 @@ services:
       - PORT=8090
       - DATA_DIR=/data
       - TZ=Asia/Shanghai
+      # 账号为注册制：首次访问 /login 会显示注册表单，注册的管理员账号保存在 data/auth.json。
+      # 无需（也不建议）设置 LANCMS_USER/LANCMS_PASS 环境变量；
+      # 若旧版本曾设置过这两个变量，升级后首次启动会自动迁移为注册账号，原密码继续有效。
     volumes:
       - ./lan-cms-data:/data

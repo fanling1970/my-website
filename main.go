@@ -6,6 +6,7 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
@@ -41,6 +42,7 @@ type Node struct {
 	Content   string    `json:"content"`           // page: 富文本 HTML；file: 文件访问路径
 	FileName  string    `json:"fileName,omitempty"` // file: 原始文件名
 	Size      int64     `json:"size,omitempty"`    // file: 字节数
+	Hidden    bool      `json:"hidden,omitempty"`  // 仅登录可见（前台未登录时不显示/不可访问）
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
@@ -163,6 +165,7 @@ func (s *Store) Update(id string, n Node, parent *string) (Node, error) {
 	}
 	old.FileName = n.FileName
 	old.Size = n.Size
+	old.Hidden = n.Hidden
 	old.UpdatedAt = time.Now()
 	s.nodes[id] = old
 	if err := s.persistLocked(); err != nil {
@@ -199,11 +202,7 @@ func (s *Store) Delete(id string) (int, error) {
 }
 
 func newID() string {
-	b := make([]byte, 8)
-	if _, err := rand.Read(b); err != nil {
-		return hex.EncodeToString([]byte(time.Now().String()))
-	}
-	return hex.EncodeToString(b)
+	return hex.EncodeToString(newIDBytes())
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -219,18 +218,66 @@ var (
 	sessionMu  sync.Mutex
 	sessions   = map[string]time.Time{} // token -> 过期时间
 	sessionTTL = 7 * 24 * time.Hour
+	authPath   string                   // 认证数据文件（data/auth.json），在 main 中初始化
 )
 
-func adminCred() (string, string) {
+// authInfo 注册制账号：用户名 + 加盐密码哈希
+type authInfo struct {
+	User     string `json:"user"`
+	PassHash string `json:"passHash"`
+	Salt     string `json:"salt"`
+}
+
+func hashPass(pass, salt string) string {
+	h := sha256.Sum256([]byte(salt + ":" + pass))
+	return hex.EncodeToString(h[:])
+}
+
+// parseFormCompat 兼容两种表单提交：
+// 浏览器 FormData 是 multipart/form-data（必须 ParseMultipartForm 才能读到字段）；
+// 普通 urlencoded 表单/curl 客户端用 ParseForm。ParseMultipartForm 对非 multipart 会返回错误，失败则回退 ParseForm。
+func parseFormCompat(r *http.Request) {
+	if err := r.ParseMultipartForm(1 << 20); err != nil {
+		_ = r.ParseForm()
+	}
+}
+
+func loadAuth() (authInfo, bool) {
+	b, err := os.ReadFile(authPath)
+	if err != nil {
+		return authInfo{}, false
+	}
+	var a authInfo
+	if json.Unmarshal(b, &a) != nil || a.User == "" {
+		return authInfo{}, false
+	}
+	return a, true
+}
+
+func saveAuth(a authInfo) error {
+	b, err := json.MarshalIndent(a, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := authPath + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, authPath)
+}
+
+// migrateAuthIfNeeded 兼容旧版环境变量账号：auth.json 不存在且设置了 LANCMS_USER/PASS 时迁移为注册制账号
+func migrateAuthIfNeeded() {
+	if _, err := os.Stat(authPath); err == nil {
+		return
+	}
 	u := os.Getenv("LANCMS_USER")
-	if u == "" {
-		u = "admin"
-	}
 	p := os.Getenv("LANCMS_PASS")
-	if p == "" {
-		p = "admin123"
+	if u == "" || p == "" {
+		return
 	}
-	return u, p
+	salt := hex.EncodeToString(newIDBytes())
+	_ = saveAuth(authInfo{User: u, PassHash: hashPass(p, salt), Salt: salt})
 }
 
 // authMiddleware 保护后台页面与写 API：校验 lancms_session Cookie
@@ -262,6 +309,14 @@ func validSession(r *http.Request) bool {
 	return ok && time.Now().Before(exp)
 }
 
+func newIDBytes() []byte {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return []byte(time.Now().String())
+	}
+	return b
+}
+
 func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -278,12 +333,25 @@ func main() {
 	}
 	uploadsDir := filepath.Join(dataDir, "uploads")
 	filesDir := filepath.Join(dataDir, "files")
+	authPath = filepath.Join(dataDir, "auth.json")
+	migrateAuthIfNeeded()
 
 	mux := http.NewServeMux()
 
 	// ---------- 节点 API ----------
 	mux.HandleFunc("GET /api/nodes", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, store.List())
+		list := store.List()
+		// 未登录时过滤"仅登录可见"页面，登录后显示全部
+		if !validSession(r) {
+			filtered := make([]Node, 0, len(list))
+			for _, n := range list {
+				if !n.Hidden {
+					filtered = append(filtered, n)
+				}
+			}
+			list = filtered
+		}
+		writeJSON(w, 200, list)
 	})
 	mux.HandleFunc("POST /api/nodes", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
@@ -291,6 +359,7 @@ func main() {
 			Parent  string `json:"parent"`
 			Title   string `json:"title"`
 			Content string `json:"content"`
+			Hidden  bool   `json:"hidden"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, 400, map[string]string{"error": "请求格式错误"})
@@ -304,7 +373,7 @@ func main() {
 			writeJSON(w, 400, map[string]string{"error": "标题不能为空"})
 			return
 		}
-		n, err := store.Create(Node{Type: req.Type, Parent: req.Parent, Title: req.Title, Content: req.Content})
+		n, err := store.Create(Node{Type: req.Type, Parent: req.Parent, Title: req.Title, Content: req.Content, Hidden: req.Hidden})
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
@@ -317,6 +386,10 @@ func main() {
 			writeJSON(w, 404, map[string]string{"error": "not found"})
 			return
 		}
+		if n.Hidden && !validSession(r) {
+			writeJSON(w, 401, map[string]string{"error": "未登录"})
+			return
+		}
 		writeJSON(w, 200, n)
 	})
 	mux.HandleFunc("PUT /api/nodes/{id}", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
@@ -324,12 +397,13 @@ func main() {
 			Title   string  `json:"title"`
 			Content string  `json:"content"`
 			Parent  *string `json:"parent"`
+			Hidden  bool    `json:"hidden"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, 400, map[string]string{"error": "请求格式错误"})
 			return
 		}
-		n, err := store.Update(r.PathValue("id"), Node{Title: req.Title, Content: req.Content}, req.Parent)
+		n, err := store.Update(r.PathValue("id"), Node{Title: req.Title, Content: req.Content, Hidden: req.Hidden}, req.Parent)
 		if err != nil {
 			writeJSON(w, 404, map[string]string{"error": "not found"})
 			return
@@ -432,17 +506,21 @@ func main() {
 			_, _ = w.Write(b)
 		}
 	}
-	// ---------- 登录 / 退出 / 会话 ----------
+
+	// ---------- 登录 / 注册 / 退出 / 会话 / 改密 ----------
 	mux.HandleFunc("GET /login", servePage("login.html", "no-cache"))
+	mux.HandleFunc("GET /api/auth-status", func(w http.ResponseWriter, r *http.Request) {
+		_, ok := loadAuth()
+		writeJSON(w, 200, map[string]bool{"registered": ok, "loggedIn": validSession(r)})
+	})
 	mux.HandleFunc("POST /api/login", func(w http.ResponseWriter, r *http.Request) {
-		// 浏览器用 FormData(multipart) 提交，必须 ParseMultipartForm 才能读到字段；
-		// 该方法内部对 urlencoded 表单也会自动调用 ParseForm
-		if err := r.ParseMultipartForm(1 << 20); err != nil {
-			writeJSON(w, 200, map[string]bool{"ok": false})
+		parseFormCompat(r)
+		a, ok := loadAuth()
+		if !ok {
+			writeJSON(w, 200, map[string]bool{"ok": false, "needRegister": true})
 			return
 		}
-		user, pass := adminCred()
-		if r.FormValue("username") != user || r.FormValue("password") != pass {
+		if r.FormValue("username") != a.User || hashPass(r.FormValue("password"), a.Salt) != a.PassHash {
 			writeJSON(w, 200, map[string]bool{"ok": false})
 			return
 		}
@@ -456,6 +534,56 @@ func main() {
 		})
 		writeJSON(w, 200, map[string]bool{"ok": true})
 	})
+	mux.HandleFunc("POST /api/register", func(w http.ResponseWriter, r *http.Request) {
+		parseFormCompat(r)
+		if _, ok := loadAuth(); ok {
+			writeJSON(w, 200, map[string]any{"ok": false, "err": "已注册，请直接登录"})
+			return
+		}
+		u := strings.TrimSpace(r.FormValue("username"))
+		p := r.FormValue("password")
+		p2 := r.FormValue("confirm")
+		if u == "" || p == "" || p != p2 {
+			writeJSON(w, 200, map[string]any{"ok": false, "err": "用户名不能为空或两次密码不一致"})
+			return
+		}
+		salt := hex.EncodeToString(newIDBytes())
+		if err := saveAuth(authInfo{User: u, PassHash: hashPass(p, salt), Salt: salt}); err != nil {
+			writeJSON(w, 200, map[string]any{"ok": false, "err": "保存失败"})
+			return
+		}
+		token := newID()
+		sessionMu.Lock()
+		sessions[token] = time.Now().Add(sessionTTL)
+		sessionMu.Unlock()
+		http.SetCookie(w, &http.Cookie{
+			Name: "lancms_session", Value: token, Path: "/",
+			HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: int(sessionTTL.Seconds()),
+		})
+		writeJSON(w, 200, map[string]bool{"ok": true})
+	})
+	mux.HandleFunc("POST /api/change-password", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		parseFormCompat(r)
+		a, ok := loadAuth()
+		if !ok {
+			writeJSON(w, 200, map[string]any{"ok": false, "err": "尚未注册"})
+			return
+		}
+		if hashPass(r.FormValue("old"), a.Salt) != a.PassHash {
+			writeJSON(w, 200, map[string]any{"ok": false, "err": "当前密码错误"})
+			return
+		}
+		np := r.FormValue("new")
+		if np == "" || np != r.FormValue("confirm") {
+			writeJSON(w, 200, map[string]any{"ok": false, "err": "新密码不能为空或两次输入不一致"})
+			return
+		}
+		if err := saveAuth(authInfo{User: a.User, PassHash: hashPass(np, a.Salt), Salt: a.Salt}); err != nil {
+			writeJSON(w, 200, map[string]any{"ok": false, "err": "保存失败"})
+			return
+		}
+		writeJSON(w, 200, map[string]bool{"ok": true})
+	}))
 	mux.HandleFunc("GET /logout", func(w http.ResponseWriter, r *http.Request) {
 		if c, err := r.Cookie("lancms_session"); err == nil {
 			sessionMu.Lock()

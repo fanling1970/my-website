@@ -50,6 +50,9 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
 /* 右侧 */
 .main{flex:1;display:flex;flex-direction:column;min-width:0}
 .editor-head{display:flex;gap:12px;align-items:center;padding:14px 20px;background:var(--card);border-bottom:1px solid var(--line);flex-wrap:wrap}
+.hide-chk{display:inline-flex;align-items:center;gap:5px;font-size:13px;color:#5b7080;cursor:pointer;user-select:none}
+.hide-chk input{accent-color:var(--brand2)}
+.hide-chk:hover{color:var(--brand2)}
 #title{flex:1;min-width:220px;border:1px solid var(--line);border-radius:8px;padding:10px 14px;font-size:16px;font-weight:600;color:var(--ink);outline:none}
 #title:focus{border-color:var(--brand2);box-shadow:0 0 0 3px rgba(14,138,168,.12)}
 .actions{display:flex;gap:8px;align-items:center}
@@ -109,11 +112,12 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       </div>
     </div>
     <div class="tree-wrap"><ul id="tree" class="tree"></ul></div>
-    <div class="side-foot"><a href="/" target="_blank">查看前台 →</a><a href="#" id="btn-logout">退出登录</a></div>
+    <div class="side-foot"><a href="/" target="_blank">查看前台 →</a><a href="#" id="btn-settings">修改密码</a><a href="#" id="btn-logout">退出登录</a></div>
   </aside>
   <main class="main">
     <div class="editor-head">
       <input id="title" type="text" placeholder="输入标题…">
+      <label class="hide-chk" title="勾选后，未登录访问前台时不显示该页面"><input type="checkbox" id="chk-hidden"> 仅登录可见</label>
       <div class="actions">
         <button id="btn-save" class="btn-save">保存</button>
         <button id="btn-preview" class="btn-preview">预览</button>
@@ -245,6 +249,35 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
   }
   document.getElementById('mask').addEventListener('click', function(e){ if(e.target === this) closeModal(); });
 
+  /* ============ 修改密码 ============ */
+  function openPasswordModal(){
+    openModal('<h3 style="margin:0 0 6px">修改密码</h3>'
+      + '<p style="margin:0 0 16px;font-size:13px;color:#5b7080">输入当前密码，再设置新密码并确认</p>'
+      + '<input id="pw-old" type="password" placeholder="当前密码" style="width:100%;padding:10px 12px;border:1px solid #d7e0e6;border-radius:8px;margin-bottom:10px;font-size:14px;box-sizing:border-box">'
+      + '<input id="pw-new" type="password" placeholder="新密码" style="width:100%;padding:10px 12px;border:1px solid #d7e0e6;border-radius:8px;margin-bottom:10px;font-size:14px;box-sizing:border-box">'
+      + '<input id="pw-confirm" type="password" placeholder="再次输入新密码" style="width:100%;padding:10px 12px;border:1px solid #d7e0e6;border-radius:8px;margin-bottom:14px;font-size:14px;box-sizing:border-box">'
+      + '<div style="display:flex;gap:10px">'
+      + '<button id="pw-save" style="flex:1;padding:10px;border:none;border-radius:8px;background:#0d4a63;color:#fff;font-size:14px;font-weight:600;cursor:pointer">保存</button>'
+      + '<button id="pw-cancel" style="flex:1;padding:10px;border:1px solid #d7e0e6;border-radius:8px;background:#fff;color:#5b7080;font-size:14px;cursor:pointer">取消</button>'
+      + '</div>');
+    document.getElementById('pw-cancel').onclick = closeModal;
+    document.getElementById('pw-save').onclick = function(){
+      var oldp = document.getElementById('pw-old').value;
+      var np = document.getElementById('pw-new').value;
+      var np2 = document.getElementById('pw-confirm').value;
+      if (!oldp || !np){ toast('请填写完整'); return; }
+      if (np !== np2){ toast('两次新密码不一致'); return; }
+      var fd = new FormData();
+      fd.append('old', oldp); fd.append('new', np); fd.append('confirm', np2);
+      var btn = this; btn.disabled = true;
+      fetch('/api/change-password', { method: 'POST', body: fd }).then(function(r){ return r.json(); }).then(function(d){
+        btn.disabled = false;
+        if (d.ok){ closeModal(); toast('密码已修改，下次登录请使用新密码'); }
+        else { toast(d.err || '修改失败'); }
+      }).catch(function(){ btn.disabled = false; toast('网络错误'); });
+    };
+  }
+
   /* ============ 树 ============ */
   function renderTree(){
     var html = '';
@@ -313,6 +346,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     currentId = n.id;
     currentType = n.type;
     document.getElementById('title').value = n.title || '';
+    document.getElementById('chk-hidden').checked = !!n.hidden;
     Array.prototype.forEach.call(document.querySelectorAll('#tree .node'), function(el){
       el.classList.toggle('active', el.getAttribute('data-id')===id);
     });
@@ -1001,7 +1035,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     var title = document.getElementById('title').value.trim();
     if (!title){ toast('请先填写标题'); return; }
     if (!currentId){ toast('请先选择或新建内容'); return; }
-    var body = { title: title };
+    var body = { title: title, hidden: document.getElementById('chk-hidden').checked };
     if (currentType === 'page') body.content = sanitizeContent(editor.getHtml());
     fetch('/api/nodes/' + currentId, {
       method: 'PUT',
@@ -1047,6 +1081,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
   document.getElementById('btn-new').onclick = function(){ createNode('page'); };
   document.getElementById('btn-folder').onclick = function(){ createNode('folder'); };
   document.getElementById('btn-upload').onclick = uploadAttachment;
+  document.getElementById('btn-settings').onclick = openPasswordModal;
   document.getElementById('btn-logout').onclick = function(e){
     e.preventDefault();
     if (!confirm('确定退出登录吗？')){ return; }
