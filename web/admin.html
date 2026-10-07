@@ -141,6 +141,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     link: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1.5-1.5"/></svg>',
     crop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 2v16h16"/><path d="M18 8h4v4M6 10H2v4M16 6H2v4"/></svg>',
     border: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 15h8M9 8v8M15 8v8"/></svg>',
+    net: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14 0 18M12 3c-3 3.5-3 14 0 18"/></svg>',
     dl: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v12M6 9l6 6 6-6"/><path d="M4 19h16"/></svg>'
   };
 
@@ -202,14 +203,31 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     Array.prototype.forEach.call(div.querySelectorAll('table'), function(t){
       if (!t.querySelector('tr')){ var p = t.parentNode; if (p) p.removeChild(t); changed = true; }
     });
+    // 4. 清除块级结构间的孤立空白文本（table/tbody/根层级），
+    //    wangEditor setHtml 解析时会把它们变成孤立空 text 节点 → "Cannot resolve a DOM node" 崩溃
+    function stripBlankText(el){
+      Array.prototype.forEach.call(Array.prototype.slice.call(el.childNodes), function(cn){
+        if (cn.nodeType === 3 && (!cn.textContent || !cn.textContent.trim())){
+          el.removeChild(cn); changed = true;
+        } else if (cn.nodeType === 1 && (cn.tagName === 'TABLE' || cn.tagName === 'TBODY' || cn.tagName === 'THEAD' || cn.tagName === 'TR')){
+          stripBlankText(cn);
+        }
+      });
+    }
+    stripBlankText(div);
+    // 5. 空单元格（td/th 无内容）补 <br>：空 td 会被 setHtml 解析成孤立空 text 节点而崩溃
+    Array.prototype.forEach.call(div.querySelectorAll('td,th'), function(c){
+      if (!c.textContent.trim()){ c.innerHTML = '<br>'; changed = true; }
+    });
     return div.innerHTML || '<p><br></p>';
   }
-  /* 安全 setHtml：先清空选区再重建内容。
+  /* 安全 setHtml：先清空选区 + 内容清洗，再重建内容。
      wangEditor 在 setHtml 后会用残留的旧 selection 去查内置菜单状态，
-     若旧选区指向表格等非叶子节点会持续抛 "Cannot get the leaf node"（leaf/marks/getValue 循环崩）。 */
+     若旧选区指向表格等非叶子节点会持续抛 "Cannot get the leaf node"（leaf/marks/getValue 循环崩）；
+     文档中的孤立空白文本/畸形表格则会让 setHtml 渲染本身崩溃。 */
   function setHtmlSafe(ed, html){
     try { if (ed.selection) ed.selection = null; } catch(e){}
-    ed.setHtml(html);
+    ed.setHtml(sanitizeContent(html));
   }
   function openModal(html){
     document.getElementById('modal-box').innerHTML = html;
@@ -380,7 +398,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       }
       try {
         var sel = ed.selection;
-        if (!sel || !sel.anchor || !sel.anchor.path){ ed.restoreSelection(); sel = ed.selection; }
+        // 注意：不要在此 restoreSelection/focus —— 选中表格节点时 focus 会触发内置菜单 leaf 崩溃
         if (sel && sel.anchor && sel.anchor.path){
           for (var i=sel.anchor.path.length; i>=0; i--){
             var n = nodeAtPath(ed, sel.anchor.path.slice(0, i));
@@ -422,6 +440,11 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
         // 保存选区副本：弹窗打开期间编辑器 blur 会清空 selection，确定时用它恢复插入位置
         savedSel = ed.selection ? JSON.parse(JSON.stringify(ed.selection)) : null;
       } catch(e){}
+      // 关键：主动让编辑器失焦并清空选区。
+      // 工具栏按钮 click 会 preventDefault，编辑器因此始终持有焦点；
+      // 用户点击弹窗输入框时才触发 blur → deselect → onChange → 重渲染 → 输入框光标被抢（一闪而过）。
+      try { ed.blur(); } catch(e){}
+      try { if (ed.selection) ed.selection = null; } catch(e){}
       var pages = allNodes.filter(function(n){ return n.type === 'page'; });
       var files = allNodes.filter(function(n){ return n.type === 'file'; });
       function optHtml(list, prefix){
@@ -505,8 +528,9 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       if (img.complete) img.onload();
       document.getElementById('crop-ok').onclick = function(){
         if (!cropper || !cropperReady){ toast('图片正在初始化，请稍候再点确定'); return; }
-        var canvas = null;
-        try { canvas = cropper.getCroppedCanvas({ maxWidth: 4000, maxHeight: 4000 }); } catch(e){}
+        var canvas = null, failReason = '';
+        try { canvas = cropper.getCroppedCanvas({ maxWidth: 4000, maxHeight: 4000 }); } catch(e){ failReason = '裁剪组件异常: ' + e.message; }
+        if (!canvas && !failReason) failReason = '裁剪画布未就绪';
         if (!canvas){
           // 兜底：getCroppedCanvas 内部异常时，用 getData 手动绘制裁剪结果（不依赖 Cropper 内部画布）
           try {
@@ -519,10 +543,35 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
               var ctx = c.getContext('2d');
               ctx.drawImage(img, d.x, d.y, d.width, d.height, 0, 0, c.width, c.height);
               canvas = c;
+              failReason = '';
+            } else {
+              failReason = '选区数据无效（width=' + (d && d.width) + ', naturalWidth=' + img.naturalWidth + '）';
             }
-          } catch(e2){}
+          } catch(e2){ failReason = '手动绘制失败: ' + e2.message; }
         }
-        if (!canvas){ toast('图片尚未就绪，请稍后再试'); return; }
+        if (!canvas){
+          // 终极兜底：裁剪组件异常时直接用原图（不裁剪），保证功能可用
+          toast('裁剪不可用（' + failReason + '），将直接使用原图');
+          try {
+            fetch(oldSrc).then(function(r){ return r.blob(); }).then(function(blob){
+              var fd = new FormData();
+              fd.append('file', blob, 'original.png');
+              fetch('/api/upload', { method: 'POST', body: fd }).then(function(r){ return r.json(); }).then(function(res){
+                if (res.errno !== 0){ toast('原图上传失败'); return; }
+                var html = ed.getHtml();
+                var div = document.createElement('div');
+                div.innerHTML = html;
+                var replaced = false;
+                Array.prototype.forEach.call(div.querySelectorAll('img'), function(im){
+                  if (im.getAttribute('src') === oldSrc){ im.setAttribute('src', res.data.url); replaced = true; }
+                });
+                if (replaced){ setHtmlSafe(ed, div.innerHTML); toast('已替换图片'); }
+                closeModal();
+              });
+            });
+          } catch(e3){ toast('原图上传失败: ' + e3.message); }
+          return;
+        }
         canvas.toBlob(function(blob){
           if (!blob){ toast('裁剪失败'); return; }
           var fd = new FormData();
@@ -623,8 +672,9 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
         if (targetType !== 'image') return false; // 表格只处理第一个
       });
       if (!found) return '未定位到选中的元素';
-      // 若文档含嵌套表格，setHtml 会让 wangEditor 解析崩溃（Cannot find a descendant）：
-      // 改为直接作用到编辑区真实 DOM（即时可见），并提示样式可能在保存后不保留
+      // 先清洗内容（解包嵌套表格/清孤立空白），再做嵌套检测；
+      // 若仍含嵌套表格，setHtml 会崩（Cannot find a descendant）：改为直接作用到编辑区真实 DOM
+      div.innerHTML = sanitizeContent(div.innerHTML);
       if (targetType !== 'image' && div.querySelector('table table')){
         var realTable = document.querySelector('#editor-container table');
         if (realTable){
@@ -660,10 +710,48 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       toast(msg);
     };
 
+    /* 自定义菜单：网络图片（替换内置 insertImage 下拉里的网络图片弹窗，内置弹窗会被编辑器焦点/重渲染抢焦点） */
+    function NetImgMenu(){
+      this.title = '网络图片';
+      this.tag = 'button';
+      this.iconSvg = ICON.net;
+    }
+    NetImgMenu.prototype.getValue = function(){ return ''; };
+    NetImgMenu.prototype.isActive = function(){ return false; };
+    NetImgMenu.prototype.isDisabled = function(){ return false; };
+    NetImgMenu.prototype.exec = function(ed){
+      var savedSel = null;
+      try { savedSel = ed.selection ? JSON.parse(JSON.stringify(ed.selection)) : null; } catch(e){}
+      try { ed.blur(); } catch(e){}
+      try { if (ed.selection) ed.selection = null; } catch(e){}
+      openModal(
+        '<h3>插入网络图片</h3>'
+        + '<div class="mrow"><label>图片地址（URL）</label><input type="text" id="ni-url" placeholder="https://..."></div>'
+        + '<div class="mrow note">输入图片 URL，确定后在原光标处插入</div>'
+        + '<div class="mbtn-row"><button class="mbtn mbtn-cancel" id="ni-cancel">取消</button><button class="mbtn mbtn-ok" id="ni-ok">确定</button></div>'
+      );
+      Array.prototype.forEach.call(document.querySelectorAll('#modal-box input'), function(el){
+        el.addEventListener('mousedown', function(ev){ ev.stopPropagation(); });
+      });
+      document.getElementById('ni-cancel').onclick = closeModal;
+      document.getElementById('ni-ok').onclick = function(){
+        var url = document.getElementById('ni-url').value.trim();
+        if (!url){ toast('请输入图片地址'); return; }
+        closeModal();
+        try {
+          if (savedSel && savedSel.anchor && savedSel.anchor.path){ ed.selection = savedSel; }
+        } catch(e){}
+        try { ed.restoreSelection(); } catch(e){}
+        ed.dangerouslyInsertHtml('<img src="' + esc(url) + '" alt="" style="max-width:100%">');
+        toast('已插入图片');
+      };
+    };
+
     // 注册自定义菜单（必须在 createToolbar 之前）
     E.Boot.registerMenu({ key: 'menuLink', factory: function(){ return new LinkMenu(); } });
     E.Boot.registerMenu({ key: 'menuCrop', factory: function(){ return new CropMenu(); } });
     E.Boot.registerMenu({ key: 'menuBorder', factory: function(){ return new BorderMenu(); } });
+    E.Boot.registerMenu({ key: 'menuNetImg', factory: function(){ return new NetImgMenu(); } });
 
     editor = E.createEditor({
       selector: '#editor-container',
@@ -702,7 +790,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
           'divider',
           'insertTable',
           'menuLink',
-          'insertImage',
+          'uploadImage', 'menuNetImg',
           'menuCrop',
           'menuBorder',
           'clearStyle',
