@@ -172,6 +172,45 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
   }
 
   /* ============ 弹窗 ============ */
+  /* ---- 内容清洗：修复畸形表格（嵌套表格解包、空行/空表删除），防止 setHtml 解析崩溃 ----
+     用户文档可能因早期操作产生 table 嵌 table / 空 table-row / 表格存文本等畸形结构，
+     会让 wangEditor 内置菜单轮询抛 "Cannot get the leaf node" 且 setHtml 直接崩溃。 */
+  function sanitizeContent(html){
+    if (!html) return '<p><br></p>';
+    var div = document.createElement('div');
+    div.innerHTML = html;
+    var changed = false;
+    // 1. 解包嵌套表格：内层 table 移到外层 table 之后，变成两个独立表格
+    var nested = div.querySelectorAll('table table');
+    for (var ni = nested.length - 1; ni >= 0; ni--){
+      var inner = nested[ni];
+      var outer = inner.parentNode;
+      while (outer && outer.tagName !== 'TABLE') outer = outer.parentNode;
+      if (outer && outer.parentNode){
+        var next = outer.nextSibling;
+        var box = document.createElement('div');
+        box.appendChild(inner);
+        while (box.firstChild) outer.parentNode.insertBefore(box.firstChild, next);
+        changed = true;
+      }
+    }
+    // 2. 删除空 table-row（没有 td/th 的行）
+    Array.prototype.forEach.call(div.querySelectorAll('tr'), function(tr){
+      if (!tr.querySelector('td,th')){ var p = tr.parentNode; if (p) p.removeChild(tr); changed = true; }
+    });
+    // 3. 删除空 table（没有行的表）
+    Array.prototype.forEach.call(div.querySelectorAll('table'), function(t){
+      if (!t.querySelector('tr')){ var p = t.parentNode; if (p) p.removeChild(t); changed = true; }
+    });
+    return div.innerHTML || '<p><br></p>';
+  }
+  /* 安全 setHtml：先清空选区再重建内容。
+     wangEditor 在 setHtml 后会用残留的旧 selection 去查内置菜单状态，
+     若旧选区指向表格等非叶子节点会持续抛 "Cannot get the leaf node"（leaf/marks/getValue 循环崩）。 */
+  function setHtmlSafe(ed, html){
+    try { if (ed.selection) ed.selection = null; } catch(e){}
+    ed.setHtml(html);
+  }
   function openModal(html){
     document.getElementById('modal-box').innerHTML = html;
     document.getElementById('mask').classList.add('show');
@@ -259,7 +298,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       pa.classList.remove('show');
       ea.classList.add('show');
       if (!editor) initEditor();
-      editor.setHtml(sanitizeContent(n.content || '<p><br></p>'));
+      setHtmlSafe(editor, sanitizeContent(n.content || '<p><br></p>'));
     } else {
       ea.classList.remove('show');
       pa.classList.add('show');
@@ -365,39 +404,6 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       return null;
     }
 
-    /* ---- 内容清洗：修复畸形表格（嵌套表格解包、空行/空表删除），防止 setHtml 解析崩溃 ----
-       用户文档可能因早期操作产生 table 嵌 table / 空 table-row / 表格存文本等畸形结构，
-       会让 wangEditor 内置菜单轮询抛 "Cannot get the leaf node" 且 setHtml 直接崩溃。 */
-    function sanitizeContent(html){
-      if (!html) return '<p><br></p>';
-      var div = document.createElement('div');
-      div.innerHTML = html;
-      var changed = false;
-      // 1. 解包嵌套表格：内层 table 移到外层 table 之后，变成两个独立表格
-      var nested = div.querySelectorAll('table table');
-      for (var ni = nested.length - 1; ni >= 0; ni--){
-        var inner = nested[ni];
-        var outer = inner.parentNode;
-        while (outer && outer.tagName !== 'TABLE') outer = outer.parentNode;
-        if (outer && outer.parentNode){
-          var next = outer.nextSibling;
-          var box = document.createElement('div');
-          box.appendChild(inner);
-          while (box.firstChild) outer.parentNode.insertBefore(box.firstChild, next);
-          changed = true;
-        }
-      }
-      // 2. 删除空 table-row（没有 td/th 的行）
-      Array.prototype.forEach.call(div.querySelectorAll('tr'), function(tr){
-        if (!tr.querySelector('td,th')){ var p = tr.parentNode; if (p) p.removeChild(tr); changed = true; }
-      });
-      // 3. 删除空 table（没有行的表）
-      Array.prototype.forEach.call(div.querySelectorAll('table'), function(t){
-        if (!t.querySelector('tr')){ var p = t.parentNode; if (p) p.removeChild(t); changed = true; }
-      });
-      return div.innerHTML || '<p><br></p>';
-    }
-
     /* 自定义菜单：插入链接（支持站内页面 + 附件文件，自动填充地址） */
     function LinkMenu(){
       this.title = '插入链接';
@@ -408,11 +414,13 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     LinkMenu.prototype.isActive = function(){ return false; };
     LinkMenu.prototype.isDisabled = function(){ return false; };
     LinkMenu.prototype.exec = function(ed){
-      // 先恢复点击菜单前的选区，取选中文字作为默认链接文本
+      // 直接用编辑器保存的选区取选中文字（不 focus 编辑器，避免点击弹窗输入框时焦点被抢走）
       var selText = '';
+      var savedSel = null;
       try {
-        ed.restoreSelection();
         selText = (ed.getSelectionText() || '').trim();
+        // 保存选区副本：弹窗打开期间编辑器 blur 会清空 selection，确定时用它恢复插入位置
+        savedSel = ed.selection ? JSON.parse(JSON.stringify(ed.selection)) : null;
       } catch(e){}
       var pages = allNodes.filter(function(n){ return n.type === 'page'; });
       var files = allNodes.filter(function(n){ return n.type === 'file'; });
@@ -457,9 +465,12 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
         var target = document.getElementById('lk-target').value;
         if (!url){ toast('请填写链接地址或选择站内页面/附件'); return; }
         var label = text || selectedTitle || url;
+        closeModal();          // 先关闭弹窗再恢复编辑器焦点
+        try {
+          if (savedSel && savedSel.anchor && savedSel.anchor.path){ ed.selection = savedSel; }
+        } catch(e){}
         ed.restoreSelection();
         ed.dangerouslyInsertHtml('<a href="' + esc(url) + '" target="' + target + '">' + esc(label) + '</a>');
-        closeModal();
       };
     };
 
@@ -496,6 +507,21 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
         if (!cropper || !cropperReady){ toast('图片正在初始化，请稍候再点确定'); return; }
         var canvas = null;
         try { canvas = cropper.getCroppedCanvas({ maxWidth: 4000, maxHeight: 4000 }); } catch(e){}
+        if (!canvas){
+          // 兜底：getCroppedCanvas 内部异常时，用 getData 手动绘制裁剪结果（不依赖 Cropper 内部画布）
+          try {
+            var d = cropper.getData();
+            if (d && d.width > 0 && d.height > 0 && img.naturalWidth){
+              var c = document.createElement('canvas');
+              var s = Math.min(1, 4000 / Math.max(d.width, d.height));
+              c.width = Math.max(1, Math.round(d.width * s));
+              c.height = Math.max(1, Math.round(d.height * s));
+              var ctx = c.getContext('2d');
+              ctx.drawImage(img, d.x, d.y, d.width, d.height, 0, 0, c.width, c.height);
+              canvas = c;
+            }
+          } catch(e2){}
+        }
         if (!canvas){ toast('图片尚未就绪，请稍后再试'); return; }
         canvas.toBlob(function(blob){
           if (!blob){ toast('裁剪失败'); return; }
@@ -512,7 +538,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
               if (im.getAttribute('src') === oldSrc){ im.setAttribute('src', res.data.url); replaced = true; }
             });
             if (replaced){
-              ed.setHtml(div.innerHTML);
+              setHtmlSafe(ed, div.innerHTML);
               toast('已替换为裁剪后的图片');
             } else {
               toast('未找到原图片，请重新操作');
@@ -616,7 +642,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
                        : '已移除边框（注：文档含嵌套表格）';
         }
       }
-      ed.setHtml(div.innerHTML);
+      setHtmlSafe(ed, div.innerHTML);
       return width ? '已设置边框 ' + width + '（圆角）' : '已移除边框';
     }
     BorderMenu.prototype.exec = function(ed, value){
