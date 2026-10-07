@@ -259,7 +259,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       pa.classList.remove('show');
       ea.classList.add('show');
       if (!editor) initEditor();
-      editor.setHtml(n.content || '<p><br></p>');
+      editor.setHtml(sanitizeContent(n.content || '<p><br></p>'));
     } else {
       ea.classList.remove('show');
       pa.classList.add('show');
@@ -365,6 +365,39 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       return null;
     }
 
+    /* ---- 内容清洗：修复畸形表格（嵌套表格解包、空行/空表删除），防止 setHtml 解析崩溃 ----
+       用户文档可能因早期操作产生 table 嵌 table / 空 table-row / 表格存文本等畸形结构，
+       会让 wangEditor 内置菜单轮询抛 "Cannot get the leaf node" 且 setHtml 直接崩溃。 */
+    function sanitizeContent(html){
+      if (!html) return '<p><br></p>';
+      var div = document.createElement('div');
+      div.innerHTML = html;
+      var changed = false;
+      // 1. 解包嵌套表格：内层 table 移到外层 table 之后，变成两个独立表格
+      var nested = div.querySelectorAll('table table');
+      for (var ni = nested.length - 1; ni >= 0; ni--){
+        var inner = nested[ni];
+        var outer = inner.parentNode;
+        while (outer && outer.tagName !== 'TABLE') outer = outer.parentNode;
+        if (outer && outer.parentNode){
+          var next = outer.nextSibling;
+          var box = document.createElement('div');
+          box.appendChild(inner);
+          while (box.firstChild) outer.parentNode.insertBefore(box.firstChild, next);
+          changed = true;
+        }
+      }
+      // 2. 删除空 table-row（没有 td/th 的行）
+      Array.prototype.forEach.call(div.querySelectorAll('tr'), function(tr){
+        if (!tr.querySelector('td,th')){ var p = tr.parentNode; if (p) p.removeChild(tr); changed = true; }
+      });
+      // 3. 删除空 table（没有行的表）
+      Array.prototype.forEach.call(div.querySelectorAll('table'), function(t){
+        if (!t.querySelector('tr')){ var p = t.parentNode; if (p) p.removeChild(t); changed = true; }
+      });
+      return div.innerHTML || '<p><br></p>';
+    }
+
     /* 自定义菜单：插入链接（支持站内页面 + 附件文件，自动填充地址） */
     function LinkMenu(){
       this.title = '插入链接';
@@ -402,6 +435,10 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
         + '<div class="mrow note">提示：附件地址以 /files/ 开头（如上图上传附件后自动生成），手动填时请写完整路径。</div>'
         + '<div class="mbtn-row"><button class="mbtn mbtn-cancel" id="lk-cancel">取消</button><button class="mbtn mbtn-ok" id="lk-ok">确定</button></div>'
       );
+      // 加固：弹窗输入框 mousedown 阻止冒泡，避免编辑器/全局监听抢走焦点（光标一闪而过）
+      Array.prototype.forEach.call(document.querySelectorAll('#modal-box input, #modal-box select, #modal-box button'), function(el){
+        el.addEventListener('mousedown', function(ev){ ev.stopPropagation(); });
+      });
       document.getElementById('lk-page').onchange = function(){
         var sel = document.getElementById('lk-page');
         var v = sel.value;
@@ -447,12 +484,19 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       );
       document.getElementById('crop-cancel').onclick = closeModal;
       var img = document.getElementById('crop-img');
-      var cropper = null;
-      img.onload = function(){ cropper = new Cropper(img, { viewMode: 1, autoCropArea: 0.8, background: false }); };
+      var cropper = null, cropperReady = false;
+      img.onload = function(){
+        cropper = new Cropper(img, {
+          viewMode: 1, autoCropArea: 0.8, background: false,
+          ready: function(){ cropperReady = true; }
+        });
+      };
       if (img.complete) img.onload();
       document.getElementById('crop-ok').onclick = function(){
-        if (!cropper){ toast('图片尚未加载完成'); return; }
-        var canvas = cropper.getCroppedCanvas({ maxWidth: 4000, maxHeight: 4000 });
+        if (!cropper || !cropperReady){ toast('图片正在初始化，请稍候再点确定'); return; }
+        var canvas = null;
+        try { canvas = cropper.getCroppedCanvas({ maxWidth: 4000, maxHeight: 4000 }); } catch(e){}
+        if (!canvas){ toast('图片尚未就绪，请稍后再试'); return; }
         canvas.toBlob(function(blob){
           if (!blob){ toast('裁剪失败'); return; }
           var fd = new FormData();
@@ -553,6 +597,25 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
         if (targetType !== 'image') return false; // 表格只处理第一个
       });
       if (!found) return '未定位到选中的元素';
+      // 若文档含嵌套表格，setHtml 会让 wangEditor 解析崩溃（Cannot find a descendant）：
+      // 改为直接作用到编辑区真实 DOM（即时可见），并提示样式可能在保存后不保留
+      if (targetType !== 'image' && div.querySelector('table table')){
+        var realTable = document.querySelector('#editor-container table');
+        if (realTable){
+          if (width){
+            realTable.style.border = width + ' solid #9fb3c8';
+            realTable.style.borderRadius = '10px';
+            realTable.style.boxShadow = '0 2px 10px rgba(31,45,58,.18)';
+            realTable.style.borderCollapse = 'separate';
+            realTable.style.overflow = 'hidden';
+          } else {
+            realTable.style.border = ''; realTable.style.borderRadius = ''; realTable.style.boxShadow = '';
+            realTable.style.borderCollapse = ''; realTable.style.overflow = '';
+          }
+          return width ? '已设置边框（注：文档含嵌套表格，样式保存后可能不保留，建议整理表格结构）'
+                       : '已移除边框（注：文档含嵌套表格）';
+        }
+      }
       ed.setHtml(div.innerHTML);
       return width ? '已设置边框 ' + width + '（圆角）' : '已移除边框';
     }
@@ -581,6 +644,12 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       html: '<p><br></p>',
       config: {
         placeholder: '在这里编辑内容…',
+        hoverbarKeys: {
+          // 表格/图片/链接的快捷栏白名单：排除内置 insertLink（在表格内选区会崩溃/一闪而过），改用受控的自定义菜单
+          table: { menuKeys: ['bold', 'italic', 'underline', 'through', 'color', 'bgColor', 'clearStyle', 'tableHeader', 'tableFullWidth', 'insertTable', 'deleteTable', 'menuLink'] },
+          image: { menuKeys: ['imageWidth30', 'imageWidth50', 'imageWidth100', 'deleteImage', 'menuCrop'] },
+          link: { menuKeys: ['editLink', 'unLink'] }
+        },
         MENU_CONF: {
           uploadImage: {
             server: '/api/upload',
@@ -654,7 +723,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     if (!title){ toast('请先填写标题'); return; }
     if (!currentId){ toast('请先选择或新建内容'); return; }
     var body = { title: title };
-    if (currentType === 'page') body.content = editor.getHtml();
+    if (currentType === 'page') body.content = sanitizeContent(editor.getHtml());
     fetch('/api/nodes/' + currentId, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
