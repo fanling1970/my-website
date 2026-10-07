@@ -41,7 +41,11 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
 .node .go{display:none;border:none;background:none;color:#9fe0ee;font-size:13px;cursor:pointer;padding:2px 6px;border-radius:5px}
 .node:hover .go{display:block}
 .node .go:hover{background:rgba(255,255,255,.1)}
-.side-foot{padding:12px 14px;font-size:12px;color:#9db8cc;border-top:1px solid rgba(255,255,255,.12)}
+.side-foot{padding:12px 14px;font-size:12px;color:#9db8cc;border-top:1px solid rgba(255,255,255,.12);display:flex;gap:10px}
+.side-foot a{color:#9db8cc;text-decoration:none}
+.side-foot a:hover{color:#fff}
+.side-foot #btn-logout{margin-left:auto;color:#ffb4a2}
+.side-foot #btn-logout:hover{color:#fff}
 .side-foot a{color:#46c8d8;text-decoration:none}
 /* 右侧 */
 .main{flex:1;display:flex;flex-direction:column;min-width:0}
@@ -105,7 +109,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       </div>
     </div>
     <div class="tree-wrap"><ul id="tree" class="tree"></ul></div>
-    <div class="side-foot"><a href="/" target="_blank">查看前台 →</a></div>
+    <div class="side-foot"><a href="/" target="_blank">查看前台 →</a><a href="/logout" id="btn-logout">退出登录</a></div>
   </aside>
   <main class="main">
     <div class="editor-head">
@@ -1043,6 +1047,9 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
   document.getElementById('btn-new').onclick = function(){ createNode('page'); };
   document.getElementById('btn-folder').onclick = function(){ createNode('folder'); };
   document.getElementById('btn-upload').onclick = uploadAttachment;
+  document.getElementById('btn-logout').onclick = function(e){
+    if (!confirm('确定退出登录吗？')){ e.preventDefault(); return; }
+  };
   document.getElementById('btn-save').onclick = saveNode;
   document.getElementById('btn-preview').onclick = function(){
     if (!currentId || currentType !== 'page'){ toast('请先选择页面'); return; }

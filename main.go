@@ -384,6 +384,11 @@ func main() {
 	mux.HandleFunc("GET /admin", basicAuth(servePage("admin.html")))
 	mux.HandleFunc("GET /", servePage("index.html"))
 
+	// 退出登录：用错误凭据重定向到首页，覆盖浏览器缓存的 Basic 登录状态，下次访问 /admin 需重新输入
+	mux.HandleFunc("GET /logout", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://logout:logout@"+r.Host+"/", http.StatusFound)
+	})
+
 	log.Printf("LAN-CMS v2 已启动: http://0.0.0.0:%s   管理后台: /admin", port)
 	if err := http.ListenAndServe(":"+port, mux); err != nil {
 		log.Fatal(err)
