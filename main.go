@@ -236,7 +236,7 @@ func main() {
 	mux.HandleFunc("GET /api/nodes", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, store.List())
 	})
-	mux.HandleFunc("POST /api/nodes", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/nodes", basicAuth(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Type    string `json:"type"`
 			Parent  string `json:"parent"`
@@ -261,7 +261,7 @@ func main() {
 			return
 		}
 		writeJSON(w, 201, n)
-	})
+	}))
 	mux.HandleFunc("GET /api/nodes/{id}", func(w http.ResponseWriter, r *http.Request) {
 		n, ok := store.Get(r.PathValue("id"))
 		if !ok {
@@ -270,7 +270,7 @@ func main() {
 		}
 		writeJSON(w, 200, n)
 	})
-	mux.HandleFunc("PUT /api/nodes/{id}", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("PUT /api/nodes/{id}", basicAuth(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Title   string  `json:"title"`
 			Content string  `json:"content"`
@@ -286,18 +286,18 @@ func main() {
 			return
 		}
 		writeJSON(w, 200, n)
-	})
-	mux.HandleFunc("DELETE /api/nodes/{id}", func(w http.ResponseWriter, r *http.Request) {
+	}))
+	mux.HandleFunc("DELETE /api/nodes/{id}", basicAuth(func(w http.ResponseWriter, r *http.Request) {
 		count, err := store.Delete(r.PathValue("id"))
 		if err != nil {
 			writeJSON(w, 404, map[string]string{"error": "not found"})
 			return
 		}
 		writeJSON(w, 200, map[string]any{"ok": true, "deleted": count})
-	})
+	}))
 
 	// ---------- 文件上传（图片 + 附件）----------
-	mux.HandleFunc("POST /api/upload", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/upload", basicAuth(func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 200<<20)
 		if err := r.ParseMultipartForm(200 << 20); err != nil {
 			writeJSON(w, 400, map[string]string{"error": "文件太大或格式错误（最大 200MB）"})
@@ -358,7 +358,7 @@ func main() {
 				"size": size,
 			},
 		})
-	})
+	}))
 
 	// 图片与附件静态服务
 	mux.Handle("GET /uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir(uploadsDir))))
@@ -381,11 +381,33 @@ func main() {
 			_, _ = w.Write(b)
 		}
 	}
-	mux.HandleFunc("GET /admin", servePage("admin.html"))
+	mux.HandleFunc("GET /admin", basicAuth(servePage("admin.html")))
 	mux.HandleFunc("GET /", servePage("index.html"))
 
 	log.Printf("LAN-CMS v2 已启动: http://0.0.0.0:%s   管理后台: /admin", port)
 	if err := http.ListenAndServe(":"+port, mux); err != nil {
 		log.Fatal(err)
+	}
+}
+
+// basicAuth 用 HTTP Basic Auth 保护后台页面与写操作。
+// 用户名/密码来自环境变量 LANCMS_USER / LANCMS_PASS，缺省为 admin / admin123。
+func basicAuth(next http.HandlerFunc) http.HandlerFunc {
+	user := os.Getenv("LANCMS_USER")
+	if user == "" {
+		user = "admin"
+	}
+	pass := os.Getenv("LANCMS_PASS")
+	if pass == "" {
+		pass = "admin123"
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		u, p, ok := r.BasicAuth()
+		if !ok || u != user || p != pass {
+			w.Header().Set("WWW-Authenticate", `Basic realm="秋风小站管理后台"`)
+			http.Error(w, "未授权，请输入用户名和密码", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
 	}
 }
