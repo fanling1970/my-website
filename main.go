@@ -438,7 +438,7 @@ func main() {
 		_ = r.ParseForm()
 		user, pass := adminCred()
 		if r.FormValue("username") != user || r.FormValue("password") != pass {
-			http.Redirect(w, r, "/login?err=1", http.StatusFound)
+			writeJSON(w, 200, map[string]bool{"ok": false})
 			return
 		}
 		token := newID()
@@ -449,7 +449,7 @@ func main() {
 			Name: "lancms_session", Value: token, Path: "/",
 			HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: int(sessionTTL.Seconds()),
 		})
-		http.Redirect(w, r, "/admin", http.StatusFound)
+		writeJSON(w, 200, map[string]bool{"ok": true})
 	})
 	mux.HandleFunc("GET /logout", func(w http.ResponseWriter, r *http.Request) {
 		if c, err := r.Cookie("lancms_session"); err == nil {

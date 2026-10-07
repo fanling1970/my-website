@@ -16,6 +16,7 @@
   .err{color:#d33;font-size:13px;margin:4px 0 12px;display:none}
   button{width:100%;padding:12px;background:#0d4a63;color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;margin-top:6px}
   button:hover{background:#0b3d52}
+  button:disabled{opacity:.6;cursor:wait}
   .back{display:inline-block;margin-top:18px;font-size:13px;color:#8aa0b0;text-decoration:none}
   .back:hover{color:#0d4a63}
 </style>
@@ -25,21 +26,47 @@
     <div class="logo">秋</div>
     <h1>秋风小站</h1>
     <p class="sub">管理后台登录</p>
-    <input name="username" placeholder="用户名" autocomplete="off" readonly required>
-    <input name="password" type="password" placeholder="密码" autocomplete="new-password" readonly required>
+    <!-- 字段名先随机化，防止浏览器自动填充已保存的账号密码；提交时恢复为标准名 -->
+    <input type="text" id="u" name="l_u_9x" placeholder="用户名" autocomplete="off" required>
+    <input type="text" id="p" name="l_p_7k" placeholder="密码" autocomplete="off" style="-webkit-text-security:disc" required>
     <p class="err">用户名或密码错误，请重试</p>
-    <button type="submit">登 录</button>
+    <button type="submit" id="btn">登 录</button>
     <a class="back" href="/">← 返回首页</a>
   </form>
   <script>
-    if (location.search.indexOf('err=1') >= 0){ document.querySelector('.err').style.display = 'block'; }
-    // 阻止浏览器自动填充已保存的账号密码：输入框先设为只读（浏览器不填充只读框），
-    // 点击聚焦或 1.5 秒后恢复可输入
-    var inputs = document.querySelectorAll('.login-box input');
-    inputs.forEach(function(i){
-      i.addEventListener('focus', function(){ i.removeAttribute('readonly'); });
-    });
-    setTimeout(function(){ inputs.forEach(function(i){ i.removeAttribute('readonly'); }); }, 1500);
+    (function(){
+      var form = document.querySelector('.login-box');
+      var u = document.getElementById('u');
+      var p = document.getElementById('p');
+      var err = document.querySelector('.err');
+      var btn = document.getElementById('btn');
+      form.addEventListener('submit', function(e){
+        e.preventDefault();
+        err.style.display = 'none';
+        // 提交时恢复标准字段名，服务端按 username/password 取值
+        u.name = 'username';
+        p.name = 'password';
+        btn.disabled = true;
+        btn.textContent = '登录中…';
+        fetch('/api/login', { method: 'POST', body: new FormData(form) }).then(function(r){
+          return r.json();
+        }).then(function(d){
+          btn.disabled = false;
+          btn.textContent = '登 录';
+          if (d.ok){
+            // replace 替换当前登录页历史记录：登录页不进浏览器历史，退出后按后退不会回到这里
+            location.replace('/admin');
+          } else {
+            err.style.display = 'block';
+          }
+        }).catch(function(){
+          btn.disabled = false;
+          btn.textContent = '登 录';
+          err.textContent = '网络错误，请重试';
+          err.style.display = 'block';
+        });
+      });
+    })();
   </script>
 </body>
 </html>

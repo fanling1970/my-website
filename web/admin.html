@@ -1050,8 +1050,9 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
   document.getElementById('btn-logout').onclick = function(e){
     e.preventDefault();
     if (!confirm('确定退出登录吗？')){ return; }
-    // 服务端清除会话 Cookie 后跳转首页；之后访问 /admin 会要求重新登录
-    location.href = '/logout';
+    // 服务端清除会话 Cookie 后跳转首页；replace 替换当前后台页历史记录，
+    // 后台页不进浏览器历史，退出后按后退只会回到首页
+    location.replace('/logout');
   };
   document.getElementById('btn-save').onclick = saveNode;
   document.getElementById('btn-preview').onclick = function(){
@@ -1064,7 +1065,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
   /* 会话校验：未登录跳转登录页（含浏览器后退从缓存恢复后台页面的场景） */
   function requireSession(){
     fetch('/api/session').then(function(r){
-      if (r.status === 401){ location.href = '/login'; return null; }
+      if (r.status === 401){ location.replace('/login'); return null; }
       return r.json();
     });
   }
