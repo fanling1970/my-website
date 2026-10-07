@@ -229,6 +229,13 @@ footer{max-width:900px;margin:0 auto;padding:0 20px 26px;font-size:12px;color:va
   var params = new URLSearchParams(location.search);
   var pid = params.get('p');
   var fid = params.get('f');
+  // 退出登录后地址栏可能残留错误登录信息，清除它（避免后续请求异常/凭据残留）
+  try {
+    if (location.username || location.password){
+      var clean = location.protocol + '//' + location.host + location.pathname + location.search + location.hash;
+      location.replace(clean);
+    }
+  } catch(e){}
   fetch('/api/nodes').then(function(r){ return r.json(); }).then(function(list){
     allNodes = list;
     if (pid){ renderPage(pid); }

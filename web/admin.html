@@ -109,7 +109,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       </div>
     </div>
     <div class="tree-wrap"><ul id="tree" class="tree"></ul></div>
-    <div class="side-foot"><a href="/" target="_blank">查看前台 →</a><a href="/logout" id="btn-logout">退出登录</a></div>
+    <div class="side-foot"><a href="/" target="_blank">查看前台 →</a><a href="#" id="btn-logout">退出登录</a></div>
   </aside>
   <main class="main">
     <div class="editor-head">
@@ -1048,7 +1048,11 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
   document.getElementById('btn-folder').onclick = function(){ createNode('folder'); };
   document.getElementById('btn-upload').onclick = uploadAttachment;
   document.getElementById('btn-logout').onclick = function(e){
-    if (!confirm('确定退出登录吗？')){ e.preventDefault(); return; }
+    e.preventDefault();
+    if (!confirm('确定退出登录吗？')){ return; }
+    // 用错误凭据导航一次（地址栏导航，浏览器会发送并覆盖缓存的登录凭据），
+    // 返回首页；之后访问 /admin 会要求重新输入用户名密码
+    location.href = '//logout:logout@' + location.host + '/';
   };
   document.getElementById('btn-save').onclick = saveNode;
   document.getElementById('btn-preview').onclick = function(){
