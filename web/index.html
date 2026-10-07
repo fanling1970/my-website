@@ -52,6 +52,19 @@ main{max-width:900px;margin:0 auto;padding:24px 20px 40px}
 .article table{border-collapse:collapse;width:100%;margin:14px 0}
 .article th,.article td{border:1px solid var(--line);padding:8px 12px;text-align:left;font-size:14px}
 .article th{background:#f6f9fc}
+/* 链接框卡片（后台"链接框"菜单插入的 标题+介绍+打开链接 结构，前台识别渲染成卡片） */
+.article .lnk-card{display:block;border:1px solid var(--line);border-radius:10px;background:#f6f9fc;padding:12px 16px;margin:10px 0;box-sizing:border-box}
+.article .lnk-card h2,.article .lnk-card h3,.article .lnk-card h5{margin:0;padding:0;border:none;color:var(--ink)}
+.article .lnk-card h2{font-size:17px}
+.article .lnk-card h3{font-size:16px}
+.article .lnk-card h5{font-size:14px}
+.article .lnk-card>p:first-of-type{margin:5px 0 0;font-size:13px;color:var(--ink3)}
+.article .lnk-card>p:last-child{margin:9px 0 0}
+.article .lnk-card>p:last-child a{display:inline-block;padding:5px 14px;background:var(--brand2);color:#fff;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600}
+.article .lnk-card>p:last-child a:hover{opacity:.9;text-decoration:none}
+.article .lnk-card.lg{width:100%}
+.article .lnk-card.md{width:min(430px,100%)}
+.article .lnk-card.sm{width:min(250px,100%)}
 .back{margin-top:24px;font-size:13px}
 .back a{color:var(--brand2);font-weight:600}
 .empty{padding:60px 20px;text-align:center;color:var(--ink3);font-size:15px}
@@ -149,6 +162,22 @@ footer{max-width:900px;margin:0 auto;padding:0 20px 26px;font-size:12px;color:va
         + '<div class="meta">更新于 ' + fmt(n.updatedAt) + '</div>'
         + '<div class="content">' + n.content + '</div></article>'
         + '<div class="back"><a href="/">← 返回列表</a></div>';
+      cardify();
+    });
+  }
+
+  // 链接框卡片化：把「标题(h2/h3/h5) + 介绍段 + 打开链接段」识别为卡片并应用样式
+  function cardify(){
+    var c = document.querySelector('.article .content');
+    if (!c) return;
+    Array.prototype.forEach.call(c.querySelectorAll('h2,h3,h5'), function(h){
+      var s1 = h.nextElementSibling, s2 = s1 && s1.nextElementSibling;
+      if (s1 && s1.tagName === 'P' && s2 && s2.tagName === 'P' && s2.querySelector('a')){
+        var wrap = document.createElement('div');
+        wrap.className = 'lnk-card ' + (h.tagName === 'H2' ? 'lg' : (h.tagName === 'H5' ? 'sm' : 'md'));
+        h.parentNode.insertBefore(wrap, h);
+        wrap.appendChild(h); wrap.appendChild(s1); wrap.appendChild(s2);
+      }
     });
   }
 

@@ -142,6 +142,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     crop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 2v16h16"/><path d="M18 8h4v4M6 10H2v4M16 6H2v4"/></svg>',
     border: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 15h8M9 8v8M15 8v8"/></svg>',
     net: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14 0 18M12 3c-3 3.5-3 14 0 18"/></svg>',
+    card: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 10h18M7 15h4"/></svg>',
     dl: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v12M6 9l6 6 6-6"/><path d="M4 19h16"/></svg>'
   };
 
@@ -382,9 +383,97 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
             if (tp) lastTablePath = tp;
             return;
           }
+          if (el.tagName === 'A'){
+            // 卡片链接（打开 →）：点击进入卡片编辑弹窗
+            var cur = el.parentNode;
+            var h = null;
+            if (cur && cur.tagName === 'P'){
+              var s1 = cur.previousElementSibling;
+              if (s1 && s1.tagName === 'P'){
+                var s2 = s1.previousElementSibling;
+                if (s2 && /^H[235]$/.test(s2.tagName)) h = s2;
+              }
+            }
+            if (h){
+              e.preventDefault(); e.stopPropagation();
+              openCardEditor(ed, h);
+            }
+            return;
+          }
           el = el.parentNode;
         }
       });
+    }
+    /* 卡片编辑弹窗：读取当前链接框内容，确定后重建三块（标题/介绍/打开链接） */
+    function openCardEditor(ed, hEl){
+      var box = document.getElementById('editor-container');
+      var hs = box.querySelectorAll('h2,h3,h5');
+      var idx = -1;
+      for (var i=0;i<hs.length;i++){ if (hs[i] === hEl){ idx = i; break; } }
+      if (idx < 0) return;
+      var level = hEl.tagName === 'H2' ? 2 : (hEl.tagName === 'H5' ? 5 : 3);
+      var title = (hEl.textContent || '').replace(/^[\uD800-\uDBFF][\uDC00-\uDFFF]\s*/, '');  // 去掉前缀 emoji
+      var desc = '';
+      var link = '';
+      var s1 = hEl.nextElementSibling;
+      if (s1 && s1.tagName === 'P'){ desc = (s1.textContent || '').trim(); var s2 = s1.nextElementSibling; if (s2 && s2.tagName === 'P'){ var a = s2.querySelector('a'); if (a) link = a.getAttribute('href') || ''; } }
+      openModal(
+        '<h3>编辑链接框</h3>'
+        + '<div class="mrow"><label>标题（可加图标 emoji）</label><input type="text" id="cd-title" value="' + esc(title) + '" placeholder="例如：路由器管理"></div>'
+        + '<div class="mrow"><label>图标</label><select id="cd-icon">'
+        + '<option value="🖥">🖥 服务器/系统</option><option value="📄">📄 文档</option><option value="🔗">🔗 链接</option>'
+        + '<option value="📦">📦 软件</option><option value="🌐">🌐 网站</option><option value="⚙️">⚙️ 设置</option>'
+        + '<option value="🖼">🖼 图片</option><option value="📁">📁 文件夹</option>'
+        + '</select></div>'
+        + '<div class="mrow"><label>介绍</label><input type="text" id="cd-desc" value="' + esc(desc) + '" placeholder="一句话介绍"></div>'
+        + '<div class="mrow"><label>链接地址</label><input type="text" id="cd-link" value="' + esc(link) + '" placeholder="http://... 或 /?p=页面ID 或 /files/附件名"></div>'
+        + '<div class="mrow"><label>规格</label><select id="cd-size">'
+        + '<option value="lg"' + (level === 2 ? ' selected' : '') + '>大号链接框</option>'
+        + '<option value="md"' + (level === 3 ? ' selected' : '') + '>中号链接框</option>'
+        + '<option value="sm"' + (level === 5 ? ' selected' : '') + '>小号链接框</option>'
+        + '</select></div>'
+        + '<div class="mrow note">图标会显示在标题前；链接支持站内页 /?p=ID 或附件 /files/文件名</div>'
+        + '<div class="mbtn-row"><button class="mbtn mbtn-cancel" id="cd-cancel">取消</button><button class="mbtn mbtn-ok" id="cd-ok">确定</button></div>'
+      );
+      Array.prototype.forEach.call(document.querySelectorAll('#modal-box input, #modal-box select, #modal-box button'), function(el){
+        el.addEventListener('mousedown', function(ev){ ev.stopPropagation(); });
+      });
+      document.getElementById('cd-cancel').onclick = closeModal;
+      document.getElementById('cd-ok').onclick = function(){
+        var title = (document.getElementById('cd-title').value || '').trim() || '标题';
+        var icon = document.getElementById('cd-icon').value;
+        var desc = (document.getElementById('cd-desc').value || '').trim();
+        var link = (document.getElementById('cd-link').value || '').trim();
+        var lv = document.getElementById('cd-size').value === 'lg' ? 2 : (document.getElementById('cd-size').value === 'sm' ? 5 : 3);
+        if (!link){ toast('请填写链接地址'); return; }
+        closeModal();
+        try {
+          var html = ed.getHtml();
+          var div = document.createElement('div');
+          div.innerHTML = html;
+          var targets = div.querySelectorAll('h2,h3,h5');
+          if (targets[idx]){
+            var t = targets[idx];
+            var n1 = t.nextElementSibling;
+            var n2 = n1 ? n1.nextElementSibling : null;
+            var tag = lv === 2 ? 'h2' : (lv === 5 ? 'h5' : 'h3');
+            var frag = document.createElement('div');
+            frag.innerHTML = '<' + tag + '>' + esc(icon + ' ' + title) + '</' + tag + '>'
+              + '<p>' + esc(desc) + '</p>'
+              + '<p><a href="' + esc(link) + '" target="_blank">打开 →</a></p>';
+            var parent = t.parentNode;
+            while (frag.firstChild) parent.insertBefore(frag.firstChild, t);
+            var old = [t];
+            if (n1 && n1.tagName === 'P') old.push(n1);
+            if (n1 && n2 && n2.tagName === 'P') old.push(n2);
+            Array.prototype.forEach.call(old, function(nd){ if (nd && nd.parentNode) nd.parentNode.removeChild(nd); });
+            setHtmlSafe(ed, div.innerHTML);
+            toast('已更新链接框');
+          } else {
+            toast('未找到链接框，请重试');
+          }
+        } catch(e){ toast('更新失败: ' + e.message); }
+      };
     }
     // 获取当前应操作的图片/表格节点：点击记录 > 当前选区 > DOM 选区
     function getSelectedNode(ed, types){
@@ -747,10 +836,38 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       };
     };
 
+    /* 自定义菜单：插入链接框（卡片：标题+介绍+打开链接）。
+       用 h2/h3/h5 区分 大/中/小 规格；卡片由 标题块+介绍段+打开链接段 组成，
+       这是 wangEditor 往返（保存/重开）能完整保留的最小结构（实测验证）。 */
+    function CardMenu(){
+      this.title = '链接框';
+      this.tag = 'select';
+      this.width = 90;
+      this.iconSvg = ICON.card;
+      this.selectList = [
+        { text: '大号链接框', value: 'lg' },
+        { text: '中号链接框', value: 'md' },
+        { text: '小号链接框', value: 'sm' }
+      ];
+    }
+    CardMenu.prototype.getOptions = function(editor){ return this.selectList; };
+    CardMenu.prototype.getValue = function(){ return ''; };
+    CardMenu.prototype.isActive = function(){ return false; };
+    CardMenu.prototype.isDisabled = function(){ return false; };
+    CardMenu.prototype.exec = function(ed, value){
+      var level = value === 'lg' ? 2 : (value === 'sm' ? 5 : 3);
+      try {
+        ed.insertNode({ type: 'header' + level, children: [{ text: '🖥 标题' }] });
+        ed.insertNode({ type: 'paragraph', children: [{ text: '介绍文字' }] });
+        ed.insertNode({ type: 'paragraph', children: [{ type: 'link', url: '#', target: '_blank', children: [{ text: '打开 →' }] }] });
+        ed.insertNode({ type: 'paragraph', children: [{ text: '' }] });
+        toast('已插入链接框，点击"打开 →"设置标题、介绍和链接');
+      } catch(e){ toast('插入失败: ' + e.message); }
+    };
+
     // 注册自定义菜单（必须在 createToolbar 之前）
     E.Boot.registerMenu({ key: 'menuLink', factory: function(){ return new LinkMenu(); } });
-    E.Boot.registerMenu({ key: 'menuCrop', factory: function(){ return new CropMenu(); } });
-    E.Boot.registerMenu({ key: 'menuBorder', factory: function(){ return new BorderMenu(); } });
+    E.Boot.registerMenu({ key: 'menuCard', factory: function(){ return new CardMenu(); } });
     E.Boot.registerMenu({ key: 'menuNetImg', factory: function(){ return new NetImgMenu(); } });
 
     editor = E.createEditor({
@@ -759,9 +876,9 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       config: {
         placeholder: '在这里编辑内容…',
         hoverbarKeys: {
-          // 表格/图片/链接的快捷栏白名单：排除内置 insertLink（在表格内选区会崩溃/一闪而过），改用受控的自定义菜单
-          table: { menuKeys: ['bold', 'italic', 'underline', 'through', 'color', 'bgColor', 'clearStyle', 'tableHeader', 'tableFullWidth', 'insertTable', 'deleteTable', 'menuLink'] },
-          image: { menuKeys: ['imageWidth30', 'imageWidth50', 'imageWidth100', 'deleteImage', 'menuCrop'] },
+          // 表格/图片/链接的快捷栏白名单：表格与图片卡片只保留基础格式与删除
+          table: { menuKeys: ['bold', 'italic', 'underline', 'through', 'color', 'bgColor', 'clearStyle', 'tableHeader', 'tableFullWidth', 'insertTable', 'deleteTable'] },
+          image: { menuKeys: ['imageWidth30', 'imageWidth50', 'imageWidth100', 'deleteImage'] },
           link: { menuKeys: ['editLink', 'unLink'] }
         },
         MENU_CONF: {
@@ -788,11 +905,9 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
           'indent', 'lineHeight',
           'blockquote', 'codeBlock',
           'divider',
-          'insertTable',
           'menuLink',
+          'menuCard',
           'uploadImage', 'menuNetImg',
-          'menuCrop',
-          'menuBorder',
           'clearStyle',
           'undo', 'redo'
         ]
