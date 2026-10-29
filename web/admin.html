@@ -1717,9 +1717,27 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       };
       return true;
     }
-    function pasteCardAtCursor(){
+    function pasteCardAtCursor(targetCardEl){
       if (!cardClipboard){ toast('剪贴板为空，请先复制或剪切一张卡片'); return; }
-      insertCardBlock(cardClipboard.html, { action: cardClipboard.action, effects: cardClipboard.effects });
+      var meta = { action: cardClipboard.action, effects: cardClipboard.effects };
+      // 右键点在某张卡片上时，直接贴到该卡片后面（不依赖编辑器光标——右键菜单操作后光标常丢失）
+      if (targetCardEl && targetCardEl.isConnected){
+        var idx = parseInt(targetCardEl.getAttribute('data-card'), 10);
+        if (!isNaN(idx)){
+          var root = document.createElement('div');
+          root.innerHTML = editor.getHtml();
+          var cur = cardsInHtml(root)[idx];
+          if (cur){
+            cur.p2.insertAdjacentHTML('afterend', cardClipboard.html);
+            pageCards.splice(idx + 1, 0, meta);
+            applyHtmlThen(root.innerHTML, idx + 1);
+            toast('已粘贴卡片');
+            return;
+          }
+        }
+      }
+      // 右键点在空白处：回退到光标位置插入
+      insertCardBlock(cardClipboard.html, meta);
       toast('已粘贴卡片');
     }
     /* ---- 卡片右键菜单 ---- */
@@ -1763,12 +1781,12 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
         var op = a.getAttribute('data-op');
         var w = ctxCardEl;
         hideCardMenu();
-        if (op === 'paste'){ pasteCardAtCursor(); return; }
+        if (op === 'paste'){ pasteCardAtCursor(w); return; }
         if (!w || !w.isConnected){ toast('卡片已失效，请重新右键'); return; }
         if (op === 'up') moveCardByDom(w, -1);
         else if (op === 'down') moveCardByDom(w, 1);
-        else if (op === 'copy'){ if (copyCardToClipboard(w)) toast('已复制卡片，把光标移到目标位置后右键粘贴'); }
-        else if (op === 'cut'){ if (copyCardToClipboard(w)){ deleteCardByDom(w); toast('已剪切卡片，把光标移到目标位置后右键粘贴'); } }
+        else if (op === 'copy'){ if (copyCardToClipboard(w)) toast('已复制卡片，在目标卡片上右键→粘贴'); }
+        else if (op === 'cut'){ if (copyCardToClipboard(w)){ deleteCardByDom(w); toast('已剪切卡片，在目标卡片上右键→粘贴'); } }
         else if (op === 'edit'){ var h = w.querySelector('h2,h3,h5'); if (h) openCardEditor(editor, h); }
         else if (op === 'del'){ deleteCardByDom(w); toast('已删除卡片'); }
       });
