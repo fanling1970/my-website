@@ -249,6 +249,50 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
   /* ---- 内容清洗：修复畸形表格（嵌套表格解包、空行/空表删除），防止 setHtml 解析崩溃 ----
      用户文档可能因早期操作产生 table 嵌 table / 空 table-row / 表格存文本等畸形结构，
      会让 wangEditor 内置菜单轮询抛 "Cannot get the leaf node" 且 setHtml 直接崩溃。 */
+  // 判断一个元素是否是卡片三连的开头（h2/h3/h5 + p + p(a)）
+  function isCardStart(el){
+    if (!el || !/^H[235]$/.test(el.tagName)) return false;
+    var s1 = el.nextElementSibling, s2 = s1 && s1.nextElementSibling;
+    return !!(s1 && s1.tagName === 'P' && s2 && s2.tagName === 'P' && s2.querySelector('a'));
+  }
+  function isEmptyPara(el){
+    return !!(el && el.tagName === 'P' && !el.textContent.trim() && !el.querySelector('img,video,table,hr'));
+  }
+  /* 清理卡片周围的空段落：
+     1. 相邻两张卡片之间的空段落删掉（让它们合并进同一个 grid，避免 N 张卡堆出 N 个空行）
+     2. 连续空段落折叠为一个
+     3. 文档末尾保留一个空段落，供光标停靠 */
+  function cleanupEmptyParas(div){
+    // 1. 卡片之间的空段落：前一个是卡片链接段(<p><a></a></p>)、后一个是另一张卡片开头 → 删除
+    var ps = Array.prototype.slice.call(div.querySelectorAll('p'));
+    for (var i = 0; i < ps.length; i++){
+      var p = ps[i];
+      if (!isEmptyPara(p)) continue;
+      var prev = p.previousElementSibling;
+      var next = p.nextElementSibling;
+      var prevIsCardLink = prev && prev.tagName === 'P' && prev.querySelector('a');
+      if (prevIsCardLink && isCardStart(next)){ p.parentNode.removeChild(p); }
+    }
+    // 2. 折叠连续空段落为一个
+    var kids = Array.prototype.slice.call(div.children);
+    var lastEmpty = false;
+    for (var j = 0; j < kids.length; j++){
+      var el = kids[j];
+      if (isEmptyPara(el)){
+        if (lastEmpty) el.parentNode.removeChild(el);
+        else lastEmpty = true;
+      } else {
+        lastEmpty = false;
+      }
+    }
+    // 3. 末尾确保有一个空段落
+    var last = div.lastElementChild;
+    if (!isEmptyPara(last)){
+      var np = document.createElement('p');
+      np.innerHTML = '<br>';
+      div.appendChild(np);
+    }
+  }
   function sanitizeContent(html){
     if (!html) return '<p><br></p>';
     var div = document.createElement('div');
@@ -292,6 +336,8 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     Array.prototype.forEach.call(div.querySelectorAll('td,th'), function(c){
       if (!c.textContent.trim()){ c.innerHTML = '<br>'; changed = true; }
     });
+    // 6. 清理卡片周围的空段落（合并卡片间空行、折叠连续空行、末尾保留一个光标停靠段）
+    cleanupEmptyParas(div);
     return div.innerHTML || '<p><br></p>';
   }
   /* 安全 setHtml：先清空选区 + 内容清洗，再重建内容。
@@ -1229,11 +1275,10 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     CardMenu.prototype.exec = function(ed, value){
       var level = value === 'lg' ? 2 : (value === 'sm' ? 5 : 3);
       var tag = 'h' + level;
-      // 标题 + 介绍 + 打开链接 + 结尾空段落（光标最后停在这个空段落里）
+      // 标题 + 介绍 + 打开链接（不再追加尾部空段落，否则 N 张卡会积累 N 个空行）
       var blockHtml = '<' + tag + '>🖥 标题</' + tag + '>'
         + '<p>介绍文字</p>'
-        + '<p><a href="#" data-action="打开" target="_blank">打开 →</a></p>'
-        + '<p><br></p>';
+        + '<p><a href="#" data-action="打开" target="_blank">打开 →</a></p>';
       try {
         insertCardBlock(blockHtml, { action: '打开', effects: [] });
         toast('已插入链接框，点击"打开 →"设置标题、介绍和链接');
@@ -1472,7 +1517,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       });
       return eff;
     }
-    // 把光标放到第 idx 张卡片后面的空段落里（插入的卡片 HTML 末尾自带一个空段落）
+    // 把光标放到第 idx 张卡片后面；优先用卡片后面的空段落，没有则落到文档末尾的空段落
     function placeCursorAfterCard(idx){
       var el = getEditableBox();
       if (!el) return;
@@ -1480,7 +1525,11 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       if (!w) return;
       var node = (w.parentNode && w.parentNode.classList && w.parentNode.classList.contains('lnk-grid')) ? w.parentNode : w;
       var next = node.nextElementSibling;
-      if (!next) return;
+      if (!isEmptyPara(next)){
+        // 卡片后面没有空段落（紧跟其他内容），用文档末尾的空段落停靠
+        next = el.lastElementChild;
+        if (!isEmptyPara(next)) return;
+      }
       try {
         editor.focus();
         var r = document.createRange();
@@ -1491,7 +1540,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
         sel.addRange(r);
       } catch(e){}
     }
-    /* 在光标所在块之后插入一段卡片 HTML（blockHtml 需自带结尾空段落）。
+    /* 在光标所在块之后插入一段卡片 HTML（blockHtml 不带尾部空段落，由 sanitizeContent 统一管理空行）。
        插谁的问题：点击工具栏菜单时 window.getSelection 往往已经离开编辑区，
        所以优先用 editor.insertText 在 wangEditor 模型里打一个不可见标记 —— 模型里的位置是可靠的，
        再从 editor.getHtml() 里找到这个标记所在块，插到它后面。 */
@@ -1670,7 +1719,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     }
     function pasteCardAtCursor(){
       if (!cardClipboard){ toast('剪贴板为空，请先复制或剪切一张卡片'); return; }
-      insertCardBlock(cardClipboard.html + '<p><br></p>', { action: cardClipboard.action, effects: cardClipboard.effects });
+      insertCardBlock(cardClipboard.html, { action: cardClipboard.action, effects: cardClipboard.effects });
       toast('已粘贴卡片');
     }
     /* ---- 卡片右键菜单 ---- */
