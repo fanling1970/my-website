@@ -139,6 +139,15 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
 .fx-opt input{margin:0;accent-color:var(--brand2)}
 .fx-clear{font-size:12px;color:var(--brand2);cursor:pointer;text-decoration:none;white-space:nowrap}
 .fx-clear:hover{text-decoration:underline}
+/* 链接框卡片右键菜单 */
+#card-menu{position:fixed;z-index:9999;display:none;min-width:130px;background:#fff;border:1px solid #dbe4ec;border-radius:8px;box-shadow:0 8px 24px rgba(16,42,67,.18);padding:5px;font-size:13px}
+#card-menu.show{display:block}
+#card-menu a{display:block;padding:7px 12px;color:#2c3e50;text-decoration:none;border-radius:5px;cursor:pointer;white-space:nowrap}
+#card-menu a:hover{background:#eef6f9;color:var(--brand2)}
+#card-menu a.danger:hover{background:#fdecec;color:#d33}
+#card-menu a.disabled{opacity:.35;pointer-events:none}
+/* 卡片被选中（右键 / 单击卡片空白处）时的提示 */
+#editor-container .lnk-card.ctx-active{outline:2px solid rgba(14,138,168,.5);outline-offset:2px}
 </style>
 </head>
 <body>
@@ -176,6 +185,17 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
 <!-- 通用弹窗（裁剪 / 链接） -->
 <div class="mask" id="mask">
   <div class="modal" id="modal-box"></div>
+</div>
+
+<!-- 链接框卡片右键菜单 -->
+<div id="card-menu">
+  <a data-op="up">↑ 上移</a>
+  <a data-op="down">↓ 下移</a>
+  <a data-op="copy">复制</a>
+  <a data-op="cut">剪切</a>
+  <a data-op="paste">粘贴</a>
+  <a data-op="edit">编辑</a>
+  <a data-op="del" class="danger">删除</a>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@wangeditor/editor@5.1.23/dist/index.js"></script>
@@ -1208,15 +1228,14 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     CardMenu.prototype.isDisabled = function(){ return false; };
     CardMenu.prototype.exec = function(ed, value){
       var level = value === 'lg' ? 2 : (value === 'sm' ? 5 : 3);
+      var tag = 'h' + level;
+      // 标题 + 介绍 + 打开链接 + 结尾空段落（光标最后停在这个空段落里）
+      var blockHtml = '<' + tag + '>🖥 标题</' + tag + '>'
+        + '<p>介绍文字</p>'
+        + '<p><a href="#" data-action="打开" target="_blank">打开 →</a></p>'
+        + '<p><br></p>';
       try {
-        // 插入属于结构性修改：先把编辑区卡片 wrapper 拆掉，避免与编辑器重渲染冲突
-        try { unCardifyEditor(); } catch(e2){}
-        // 卡片是三块一组的结构，插在光标处会拆散已有卡片，因此统一追加到文档末尾
-        try { ed.focus(true); } catch(e3){}
-        ed.insertNode({ type: 'header' + level, children: [{ text: '🖥 标题' }] });
-        ed.insertNode({ type: 'paragraph', children: [{ text: '介绍文字' }] });
-        ed.insertNode({ type: 'paragraph', children: [{ type: 'link', url: '#', target: '_blank', children: [{ text: '打开 →' }] }] });
-        ed.insertNode({ type: 'paragraph', children: [{ text: '' }] });
+        insertCardBlock(blockHtml, { action: '打开', effects: [] });
         toast('已插入链接框，点击"打开 →"设置标题、介绍和链接');
       } catch(e){ toast('插入失败: ' + e.message); }
     };
@@ -1391,6 +1410,320 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       });
       isCardifying = false;
     };
+
+    /* ============ 链接框卡片：光标处插入 / 移动 / 右键菜单 ============ */
+    var CARD_MARK = '\u2063cmk\u2063';
+    var cardClipboard = null;
+
+    // 从 HTML 里按文档顺序取出所有卡片三连（h2/h3/h5 + p + p(a)）
+    function cardsInHtml(root){
+      var out = [];
+      var hs = root.querySelectorAll('h2,h3,h5');
+      for (var i = 0; i < hs.length; i++){
+        var h = hs[i], p1 = h.nextElementSibling, p2 = p1 && p1.nextElementSibling;
+        if (p1 && p1.tagName === 'P' && p2 && p2.tagName === 'P' && p2.querySelector('a')) out.push({ h: h, p1: p1, p2: p2 });
+      }
+      return out;
+    }
+    function stripMarkText(root, mark){
+      var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+      var list = [];
+      while (walker.nextNode()) list.push(walker.currentNode);
+      for (var i = 0; i < list.length; i++){
+        var t = list[i];
+        if (t.nodeValue && t.nodeValue.indexOf(mark) >= 0) t.nodeValue = t.nodeValue.split(mark).join('');
+      }
+    }
+    // HTML 副本里包含标记文本的最外层块（root 的直接子节点）
+    function blockOfMark(root, mark){
+      var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+      while (walker.nextNode()){
+        var t = walker.currentNode;
+        if (t.nodeValue && t.nodeValue.indexOf(mark) >= 0){
+          var cur = t;
+          while (cur.parentNode && cur.parentNode !== root) cur = cur.parentNode;
+          return cur.parentNode === root ? cur : null;
+        }
+      }
+      return null;
+    }
+    // 兜底：从 DOM 选区取光标所在顶层块（工具栏菜单点击后 window.getSelection 可能已不在编辑区）
+    function blockAtSelection(){
+      var el = getEditableBox();
+      if (!el) return null;
+      var node = null;
+      try {
+        var sel = window.getSelection();
+        node = sel && sel.anchorNode;
+        if (node && !el.contains(node)) node = null;
+      } catch(e){}
+      if (!node) return null;
+      var card = node.closest ? node.closest('.lnk-card') : null;
+      if (card) return card.lastElementChild;
+      var cur = node;
+      while (cur && cur !== el){ if (cur.parentNode === el) break; cur = cur.parentNode; }
+      if (cur && cur !== el && cur.nodeType === 1 && !(cur.classList && cur.classList.contains('lnk-grid'))) return cur;
+      return null;
+    }
+    function cardEffectsOf(w){
+      var eff = [];
+      Array.prototype.forEach.call(w.classList, function(c){
+        if (c.indexOf('lnk-effect-') === 0 && c !== 'lnk-effect-none') eff.push(c.slice('lnk-effect-'.length));
+      });
+      return eff;
+    }
+    // 把光标放到第 idx 张卡片后面的空段落里（插入的卡片 HTML 末尾自带一个空段落）
+    function placeCursorAfterCard(idx){
+      var el = getEditableBox();
+      if (!el) return;
+      var w = el.querySelectorAll('.lnk-card')[idx];
+      if (!w) return;
+      var node = (w.parentNode && w.parentNode.classList && w.parentNode.classList.contains('lnk-grid')) ? w.parentNode : w;
+      var next = node.nextElementSibling;
+      if (!next) return;
+      try {
+        editor.focus();
+        var r = document.createRange();
+        r.setStart(next, 0);
+        r.collapse(true);
+        var sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(r);
+      } catch(e){}
+    }
+    /* 在光标所在块之后插入一段卡片 HTML（blockHtml 需自带结尾空段落）。
+       插谁的问题：点击工具栏菜单时 window.getSelection 往往已经离开编辑区，
+       所以优先用 editor.insertText 在 wangEditor 模型里打一个不可见标记 —— 模型里的位置是可靠的，
+       再从 editor.getHtml() 里找到这个标记所在块，插到它后面。 */
+    function insertCardBlock(blockHtml, meta){
+      meta = meta || {};
+      var el = getEditableBox();
+      if (!el) return -1;
+      var root = document.createElement('div');
+      var anchor = null;
+      // 方案 A：往模型里写标记，再按标记定位
+      try {
+        editor.insertText(CARD_MARK);
+        root.innerHTML = editor.getHtml();
+        var blk = blockOfMark(root, CARD_MARK);
+        if (blk){
+          stripMarkText(root, CARD_MARK);
+          anchor = blk;
+        } else {
+          root.innerHTML = editor.getHtml();
+        }
+      } catch(e0){
+        root.innerHTML = editor.getHtml();
+      }
+      // 方案 B：仍在编辑区里的真实 DOM 选区（按索引 + 标签/文本校验对齐）
+      if (!anchor){
+        var anchorEl = blockAtSelection();
+        if (anchorEl){
+          var kids = Array.prototype.slice.call(el.children);
+          var pos = kids.indexOf(anchorEl);
+          if (pos >= 0 && pos < root.children.length){
+            var cand = root.children[pos];
+            var ta = (anchorEl.textContent || '').trim().slice(0, 12);
+            var tb = (cand.textContent || '').trim().slice(0, 12);
+            if (cand.tagName === anchorEl.tagName && ta === tb) anchor = cand;
+          }
+        }
+      }
+      // 锚点落在某张卡片三连里时，改锚到该卡片的最后一段 → 整张卡之后插入
+      if (anchor){
+        var pre = cardsInHtml(root);
+        for (var i = 0; i < pre.length; i++){
+          if (pre[i].h === anchor || pre[i].p1 === anchor || pre[i].p2 === anchor){ anchor = pre[i].p2; break; }
+        }
+      }
+      if (anchor){
+        if (!anchor.textContent.trim() && !anchor.querySelector('img,video,table,hr')) anchor.innerHTML = '<br>';
+        anchor.insertAdjacentHTML('afterend', blockHtml);
+      } else {
+        root.insertAdjacentHTML('beforeend', blockHtml);
+      }
+      var all = cardsInHtml(root);
+      var newIdx = -1;
+      if (anchor){
+        var newH = anchor.nextElementSibling;
+        for (var j = 0; j < all.length; j++){ if (all[j].h === newH){ newIdx = j; break; } }
+      }
+      if (newIdx < 0) newIdx = all.length - 1;
+      // 卡片状态按位置存储，插入点之后的卡片状态需要顺延一位
+      if (newIdx >= 0) pageCards.splice(newIdx, 0, { action: meta.action || '打开', effects: meta.effects || [] });
+      applyHtmlThen(root.innerHTML, newIdx);
+      return newIdx;
+    }
+    function rebuildCards(html, selIdx){ applyHtmlThen(html, selIdx); }
+    function titlesOf(rootEl, sel){
+      if (!rootEl) return '';
+      return Array.prototype.map.call(rootEl.querySelectorAll(sel), function(e){ return e.textContent.trim().slice(0, 8); }).join('|');
+    }
+    // wangEditor 的 setHtml 只同步更新模型，DOM 重绘是异步的、有时甚至不重绘；
+    // 这里设置后校验，必要时清空再重设来强制重绘，等 DOM 与目标一致后再 cardify／定位光标
+    //（过早执行会作用在旧结构上，表现就是"下移了但界面没变"）
+    function applyHtmlThen(html, selIdx){
+      var d = document.createElement('div');
+      d.innerHTML = html || '';
+      var exp = titlesOf(d, 'h2,h3,h5');
+      setHtmlSafe(editor, html);
+      var tries = 0;
+      (function check(){
+        if (titlesOf(getEditableBox(), 'h2,h3,h5') === exp){
+          cardifyEditor();
+          if (typeof selIdx === 'number' && selIdx >= 0) placeCursorAfterCard(selIdx);
+          return;
+        }
+        if (tries === 2){
+          setHtmlSafe(editor, '<p><br></p>');
+          setHtmlSafe(editor, html);
+        }
+        if (tries < 12){ tries++; setTimeout(check, 40); return; }
+        cardifyEditor();
+        if (typeof selIdx === 'number' && selIdx >= 0) placeCursorAfterCard(selIdx);
+      })();
+    }
+    function isBlankBlock(el){
+      return !!(el && el.nodeType === 1 && el.tagName === 'P'
+        && !el.textContent.trim() && !el.querySelector('img,video,table,hr'));
+    }
+    // dir: -1 上移一个块位，1 下移一个块位（跳过空段落，避免"点了没反应"）
+    function moveCardByDom(w, dir){
+      var idx = parseInt(w.getAttribute('data-card'), 10);
+      if (isNaN(idx)) return;
+      var root = document.createElement('div');
+      root.innerHTML = editor.getHtml();
+      var cards = cardsInHtml(root);
+      var cur = cards[idx];
+      if (!cur) return;
+      var p = cur.h.parentNode;
+      var newIdx = idx;
+      if (dir < 0){
+        if (idx > 0){
+          // 与上一张卡片交换
+          var ref0 = cards[idx - 1].h;
+          p.insertBefore(cur.h, ref0);
+          p.insertBefore(cur.p1, ref0);
+          p.insertBefore(cur.p2, ref0);
+          var t = pageCards[idx - 1]; pageCards[idx - 1] = pageCards[idx]; pageCards[idx] = t;
+          newIdx = idx - 1;
+        } else {
+          // 已是第一张卡：跳过上方空段落，移到上一个真实内容块之前
+          var prev = cur.h.previousElementSibling;
+          while (prev && isBlankBlock(prev)) prev = prev.previousElementSibling;
+          if (!prev) return;
+          p.insertBefore(cur.h, prev);
+          p.insertBefore(cur.p1, prev);
+          p.insertBefore(cur.p2, prev);
+        }
+      } else {
+        if (idx + 1 < cards.length){
+          // 与下一张卡片交换：插到下一张卡的三连之后
+          var ref1 = cards[idx + 1].p2.nextElementSibling;
+          p.insertBefore(cur.h, ref1);
+          p.insertBefore(cur.p1, ref1);
+          p.insertBefore(cur.p2, ref1);
+          var t2 = pageCards[idx + 1]; pageCards[idx + 1] = pageCards[idx]; pageCards[idx] = t2;
+          newIdx = idx + 1;
+        } else {
+          // 已是最后一张卡：跳过下方空段落，移到下一个真实内容块（如 my-panel）之后
+          var nb = cur.p2.nextElementSibling;
+          while (nb && isBlankBlock(nb)) nb = nb.nextElementSibling;
+          if (!nb) return;
+          var ref2 = nb.nextElementSibling;
+          p.insertBefore(cur.h, ref2);
+          p.insertBefore(cur.p1, ref2);
+          p.insertBefore(cur.p2, ref2);
+        }
+      }
+      rebuildCards(root.innerHTML, newIdx);
+    }
+    function deleteCardByDom(w){
+      var idx = parseInt(w.getAttribute('data-card'), 10);
+      if (isNaN(idx)) return;
+      var root = document.createElement('div');
+      root.innerHTML = editor.getHtml();
+      var cur = cardsInHtml(root)[idx];
+      if (!cur) return;
+      cur.h.parentNode.removeChild(cur.h);
+      cur.p1.parentNode.removeChild(cur.p1);
+      cur.p2.parentNode.removeChild(cur.p2);
+      if (idx < pageCards.length) pageCards.splice(idx, 1);
+      rebuildCards(root.innerHTML, idx - 1);
+    }
+    function copyCardToClipboard(w){
+      var idx = parseInt(w.getAttribute('data-card'), 10);
+      if (isNaN(idx)) return false;
+      var root = document.createElement('div');
+      root.innerHTML = editor.getHtml();
+      var cur = cardsInHtml(root)[idx];
+      if (!cur) return false;
+      var tag = cur.h.tagName.toLowerCase();
+      cardClipboard = {
+        html: '<' + tag + '>' + cur.h.innerHTML + '</' + tag + '>'
+              + '<p>' + cur.p1.innerHTML + '</p>'
+              + '<p>' + cur.p2.innerHTML + '</p>',
+        action: w.getAttribute('data-card-action') || '打开',
+        effects: cardEffectsOf(w)
+      };
+      return true;
+    }
+    function pasteCardAtCursor(){
+      if (!cardClipboard){ toast('剪贴板为空，请先复制或剪切一张卡片'); return; }
+      insertCardBlock(cardClipboard.html + '<p><br></p>', { action: cardClipboard.action, effects: cardClipboard.effects });
+      toast('已粘贴卡片');
+    }
+    /* ---- 卡片右键菜单 ---- */
+    var ctxCardEl = null;
+    var cardMenuEl = document.getElementById('card-menu');
+    function showCardMenu(x, y, w){
+      ctxCardEl = w;
+      Array.prototype.forEach.call(cardMenuEl.querySelectorAll('a'), function(a){
+        var needCard = a.getAttribute('data-op') !== 'paste';
+        a.classList.toggle('disabled', needCard && !w);
+      });
+      cardMenuEl.classList.add('show');
+      var pw = cardMenuEl.offsetWidth || 130, ph = cardMenuEl.offsetHeight || 240;
+      cardMenuEl.style.left = Math.max(4, Math.min(x, window.innerWidth - pw - 8)) + 'px';
+      cardMenuEl.style.top = Math.max(4, Math.min(y, window.innerHeight - ph - 8)) + 'px';
+    }
+    function hideCardMenu(){ cardMenuEl.classList.remove('show'); }
+    function markActiveCard(w){
+      Array.prototype.forEach.call(document.querySelectorAll('#editor-container .lnk-card.ctx-active'), function(c){ c.classList.remove('ctx-active'); });
+      if (w) w.classList.add('ctx-active');
+    }
+    (function bindCardOps(){
+      var el = getEditableBox();
+      if (!el || el.__cardOpsBound) return;
+      el.__cardOpsBound = true;
+      el.addEventListener('contextmenu', function(ev){
+        var w = ev.target.closest ? ev.target.closest('.lnk-card') : null;
+        ev.preventDefault();
+        markActiveCard(w);
+        showCardMenu(ev.clientX, ev.clientY, w);
+      });
+      el.addEventListener('click', function(ev){
+        var w = ev.target.closest ? ev.target.closest('.lnk-card') : null;
+        markActiveCard(w);
+      });
+      document.addEventListener('mousedown', function(ev){ hideCardMenu(); });
+      cardMenuEl.addEventListener('mousedown', function(ev){ ev.stopPropagation(); });
+      cardMenuEl.addEventListener('click', function(ev){
+        var a = ev.target.closest ? ev.target.closest('a[data-op]') : null;
+        if (!a) return;
+        var op = a.getAttribute('data-op');
+        var w = ctxCardEl;
+        hideCardMenu();
+        if (op === 'paste'){ pasteCardAtCursor(); return; }
+        if (!w || !w.isConnected){ toast('卡片已失效，请重新右键'); return; }
+        if (op === 'up') moveCardByDom(w, -1);
+        else if (op === 'down') moveCardByDom(w, 1);
+        else if (op === 'copy'){ if (copyCardToClipboard(w)) toast('已复制卡片，把光标移到目标位置后右键粘贴'); }
+        else if (op === 'cut'){ if (copyCardToClipboard(w)){ deleteCardByDom(w); toast('已剪切卡片，把光标移到目标位置后右键粘贴'); } }
+        else if (op === 'edit'){ var h = w.querySelector('h2,h3,h5'); if (h) openCardEditor(editor, h); }
+        else if (op === 'del'){ deleteCardByDom(w); toast('已删除卡片'); }
+      });
+    })();
     var cardifyTimer = null;
     editor.on('change', function(){
       clearTimeout(cardifyTimer);
