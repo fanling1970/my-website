@@ -102,8 +102,9 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
 #editor-container .lnk-grid{display:grid;gap:10px;margin:10px 0}
 #editor-container .lnk-grid.md{grid-template-columns:repeat(3,minmax(0,1fr))}
 #editor-container .lnk-grid.sm{grid-template-columns:repeat(4,minmax(0,1fr))}
-#editor-container .lnk-card{border:1px solid #d7e1ea;border-radius:10px;background:#f6f9fc;padding:10px 14px;margin:8px 0;transition:border-color .2s}
-#editor-container .lnk-card:hover{border-color:#0e8aa8}
+#editor-container .lnk-card{border:1px solid #d7e1ea;border-radius:10px;background:#f6f9fc;padding:10px 14px;margin:8px 0;transition:border-color .2s,box-shadow .2s,transform .2s}
+/* 默认（无特效）不加任何 hover 效果，特效由 lnk-effect-xxx class 决定 */
+#editor-container .lnk-card.lnk-effect-highlight:hover{border-color:#0e8aa8;box-shadow:0 0 0 2px rgba(14,138,168,.2)}
 #editor-container .lnk-card.lg{width:100%}
 #editor-container .lnk-grid .lnk-card{margin:0}
 #editor-container .lnk-card h2,#editor-container .lnk-card h3,#editor-container .lnk-card h5{margin:0;padding:0;border:none;font-size:16px;color:#1f2d3a;background:transparent}
@@ -130,6 +131,14 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
 #editor-container .lnk-card.lnk-effect-scale:hover{transform:scale(1.03);transition:transform .2s}
 #editor-container .lnk-card.lnk-effect-glow:hover{box-shadow:0 0 0 2px rgba(14,138,168,.25),0 0 20px rgba(14,138,168,.18)}
 @keyframes lnk-shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-3px)}40%{transform:translateX(3px)}60%{transform:translateX(-2px)}80%{transform:translateX(2px)}}
+/* 特效多选 chips */
+.fx-row{display:flex;flex-wrap:wrap;gap:8px}
+.fx-opt{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border:1px solid var(--line);border-radius:999px;font-size:13px;color:#34495a;cursor:pointer;user-select:none;background:#f7fafc;transition:all .15s}
+.fx-opt:hover{border-color:var(--brand2)}
+.fx-opt.on{background:#eaf5f8;border-color:var(--brand2);color:var(--brand2);font-weight:600}
+.fx-opt input{margin:0;accent-color:var(--brand2)}
+.fx-clear{font-size:12px;color:var(--brand2);cursor:pointer;text-decoration:none;white-space:nowrap}
+.fx-clear:hover{text-decoration:underline}
 </style>
 </head>
 <body>
@@ -275,6 +284,81 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     try { if (uncardifyEditor) uncardifyEditor(); } catch(e){}
     ed.setHtml(sanitizeContent(html));
   }
+  /* ============ 链接框卡片状态（动作 / 特效）============
+     wangEditor 的 link 元素只序列化 href/target，自定义 data-* 属性在 setHtml/getHtml 往返中会被丢弃，
+     所以卡片状态不能只依赖 <a data-effect>。这里以"页面级卡片数组"为真源：
+     - 加载：extractCardState 从存储 HTML 里读走 data-action/data-effect，并从 HTML 中剥离
+     - 保存：injectCardState 把状态数组按卡片顺序写回序列化 HTML 的 <a> 上
+     前端 index.html 直接读这两个属性渲染。 */
+  var pageCards = [];       // [{ action:'打开', effects:['shake'] }, ...] 按卡片在文档中的顺序
+  var FX_KEYS = ['highlight', 'shake', 'scale', 'glow'];
+
+  function parseEffects(v){
+    if (!v) return [];
+    return String(v).split(/\s+/).filter(function(x){ return x && x !== 'none' && FX_KEYS.indexOf(x) >= 0; });
+  }
+  // 遍历 HTML 副本中的卡片（h2/h3/h5 + p + p(a) 三连），回调拿到 <a>
+  function eachCardAnchor(html, cb){
+    var div = document.createElement('div');
+    div.innerHTML = html || '';
+    var hs = div.querySelectorAll('h2,h3,h5');
+    var n = 0;
+    for (var i = 0; i < hs.length; i++){
+      var h = hs[i], s1 = h.nextElementSibling, s2 = s1 && s1.nextElementSibling;
+      if (!(s1 && s1.tagName === 'P' && s2 && s2.tagName === 'P')) continue;
+      var a = s2.querySelector('a');
+      if (!a) continue;
+      cb(a, n++);
+    }
+    return div.innerHTML;
+  }
+  function extractCardState(html){
+    var state = [];
+    var clean = eachCardAnchor(html, function(a){
+      state.push({
+        action: a.getAttribute('data-action') || '',
+        effects: parseEffects(a.getAttribute('data-effect'))
+      });
+      a.removeAttribute('data-action');
+      a.removeAttribute('data-effect');
+    });
+    return { html: clean, state: state };
+  }
+  function injectCardState(html, state){
+    return eachCardAnchor(html, function(a, n){
+      var st = state[n];
+      if (!st) return;
+      if (st.action) a.setAttribute('data-action', st.action);
+      if (st.effects && st.effects.length) a.setAttribute('data-effect', st.effects.join(' '));
+    });
+  }
+  // 从编辑区已 cardify 的卡片 wrapper 上回收状态（卡片增删后索引会变，DOM 才是最终真相）
+  function collectCardStateFromDom(){
+    var box = document.querySelector('#editor-container [contenteditable="true"]')
+           || document.querySelector('#editor-container [data-slate-editor]');
+    if (!box) return null;
+    var cards = box.querySelectorAll('.lnk-card');
+    if (!cards.length) return null;
+    var state = [];
+    Array.prototype.forEach.call(cards, function(w){
+      var effects = [];
+      Array.prototype.forEach.call(w.classList, function(c){
+        if (c.indexOf('lnk-effect-') === 0 && c !== 'lnk-effect-none') effects.push(c.slice('lnk-effect-'.length));
+      });
+      state.push({ action: w.getAttribute('data-card-action') || '', effects: effects });
+    });
+    return state;
+  }
+  // 保存时使用：DOM 能读到就用 DOM，读不到（还没 cardify）就用 pageCards
+  function currentCardState(){
+    var domState = collectCardStateFromDom();
+    if (!domState) return pageCards;
+    return domState.map(function(s, i){
+      if (!s.action && pageCards[i] && pageCards[i].action) s.action = pageCards[i].action;
+      return s;
+    });
+  }
+
   function openModal(html){
     document.getElementById('modal-box').innerHTML = html;
     document.getElementById('mask').classList.add('show');
@@ -473,7 +557,10 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       pa.classList.remove('show');
       ea.classList.add('show');
       if (!editor) initEditor();
-      setHtmlSafe(editor, sanitizeContent(n.content || '<p><br></p>'));
+      // 先从存储内容里提取卡片状态（动作/特效），再加载剥离后的 HTML
+      var ex = extractCardState(n.content || '');
+      pageCards = ex.state;
+      setHtmlSafe(editor, sanitizeContent(ex.html) || '<p><br></p>');
       // setHtmlSafe 会触发 onChange → 300ms 后 cardify，但我们立即也执行一次让卡片立即可见
       setTimeout(function(){ cardifyEditor(); }, 50);
     } else {
@@ -569,6 +656,21 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       var idx = -1;
       for (var i=0;i<hs.length;i++){ if (hs[i] === hEl){ idx = i; break; } }
       if (idx < 0) return;
+      // 卡片索引（只数有效卡片，与 pageCards / injectCardState 的顺序一致）
+      var cardIdx = -1;
+      var wrap = hEl.closest ? hEl.closest('.lnk-card') : null;
+      if (wrap && wrap.hasAttribute('data-card')) cardIdx = parseInt(wrap.getAttribute('data-card'), 10);
+      if (cardIdx < 0){
+        var cnt = 0;
+        for (var ci=0; ci<hs.length; ci++){
+          var ch = hs[ci], c1 = ch.nextElementSibling, c2 = c1 && c1.nextElementSibling;
+          if (c1 && c1.tagName === 'P' && c2 && c2.tagName === 'P' && c2.querySelector('a')){
+            if (ch === hEl){ cardIdx = cnt; break; }
+            cnt++;
+          }
+        }
+      }
+      var st = cardIdx >= 0 ? pageCards[cardIdx] : null;
       var level = hEl.tagName === 'H2' ? 2 : (hEl.tagName === 'H5' ? 5 : 3);
       var rawTitle = hEl.textContent || '';
       var em = rawTitle.match(/^([\uD800-\uDBFF][\uDC00-\uDFFF])\s*/);
@@ -577,9 +679,21 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       var desc = '';
       var link = '';
       var curAction = '打开';
-      var curEffect = 'none';
+      var curEffects = [];
       var s1 = hEl.nextElementSibling;
-      if (s1 && s1.tagName === 'P'){ desc = (s1.textContent || '').trim(); var s2 = s1.nextElementSibling; if (s2 && s2.tagName === 'P'){ var a = s2.querySelector('a'); if (a){ link = a.getAttribute('href') || ''; var act = a.getAttribute('data-action'); curAction = act || curAction; var ef = a.getAttribute('data-effect'); curEffect = ef || 'none'; } } }
+      if (s1 && s1.tagName === 'P'){
+        desc = (s1.textContent || '').trim();
+        var s2 = s1.nextElementSibling;
+        if (s2 && s2.tagName === 'P'){
+          var a = s2.querySelector('a');
+          if (a){ link = a.getAttribute('href') || ''; curAction = a.getAttribute('data-action') || curAction; curEffects = parseEffects(a.getAttribute('data-effect')); }
+        }
+      }
+      // 页面级状态是真源（DOM 属性在编辑器往返中可能已被剥离）
+      if (st){
+        if (st.action) curAction = st.action;
+        curEffects = st.effects || [];
+      }
       function iconOpt(v, label){
         return '<option value="' + v + '"' + (v === curIcon ? ' selected' : '') + '>' + label + '</option>';
       }
@@ -609,13 +723,15 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
         + '<option value="_custom">✎ 自定义…</option>'
         + '</select></div>'
         + '<div class="mrow" id="cd-action-custom-row" style="display:none"><label>自定义动作文字</label><input type="text" id="cd-action-custom" placeholder="如：立即体验 →"></div>'
-        + '<div class="mrow"><label>特效（鼠标悬停时的效果）</label><select id="cd-effect">'
-        + '<option value="none"' + (curEffect === 'none' ? ' selected' : '') + '>无（默认）</option>'
-        + '<option value="highlight"' + (curEffect === 'highlight' ? ' selected' : '') + '>边框高亮</option>'
-        + '<option value="shake"' + (curEffect === 'shake' ? ' selected' : '') + '>轻微晃动</option>'
-        + '<option value="scale"' + (curEffect === 'scale' ? ' selected' : '') + '>平滑放大</option>'
-        + '<option value="glow"' + (curEffect === 'glow' ? ' selected' : '') + '>发光光晕</option>'
-        + '</select></div>'
+        + '<div class="mrow"><label>特效（鼠标悬停时的效果，可多选，也可都不选 = 无）</label>'
+        + '<div class="fx-row" id="cd-effects">'
+        + [['highlight','边框高亮'],['shake','轻微晃动'],['scale','平滑放大'],['glow','发光光晕']].map(function(f){
+            var on = curEffects.indexOf(f[0]) >= 0;
+            return '<label class="fx-opt' + (on ? ' on' : '') + '"><input type="checkbox" value="' + f[0] + '"' + (on ? ' checked' : '') + '>' + f[1] + '</label>';
+          }).join('')
+        + '</div>'
+        + '<div class="mrow note" style="margin-top:8px"><a href="#" class="fx-clear" id="cd-fx-clear">清除全部（无特效）</a></div>'
+        + '</div>'
         + '<div class="mrow"><label>规格</label><select id="cd-size">'
         + '<option value="lg"' + (level === 2 ? ' selected' : '') + '>大号链接框</option>'
         + '<option value="md"' + (level === 3 ? ' selected' : '') + '>中号链接框</option>'
@@ -627,6 +743,20 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       Array.prototype.forEach.call(document.querySelectorAll('#modal-box input, #modal-box select, #modal-box button'), function(el){
         el.addEventListener('mousedown', function(ev){ ev.stopPropagation(); });
       });
+      // 特效多选 chips：勾选状态同步到 chip 高亮
+      Array.prototype.forEach.call(document.querySelectorAll('#cd-effects input'), function(cb){
+        cb.onchange = function(){
+          var lab = cb.parentNode;
+          if (cb.checked) lab.classList.add('on'); else lab.classList.remove('on');
+        };
+      });
+      document.getElementById('cd-fx-clear').onclick = function(ev){
+        ev.preventDefault();
+        Array.prototype.forEach.call(document.querySelectorAll('#cd-effects input'), function(cb){
+          cb.checked = false;
+          cb.parentNode.classList.remove('on');
+        });
+      };
       // 自定义动作切换
       document.getElementById('cd-action').onchange = function(){
         var v = this.value;
@@ -660,8 +790,11 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
           action = actSel;
         }
         var lv = document.getElementById('cd-size').value === 'lg' ? 2 : (document.getElementById('cd-size').value === 'sm' ? 5 : 3);
-        var effect = document.getElementById('cd-effect').value || 'none';
+        var effects = [];
+        Array.prototype.forEach.call(document.querySelectorAll('#cd-effects input'), function(cb){ if (cb.checked) effects.push(cb.value); });
         if (!link){ toast('请填写链接地址'); return; }
+        // 写入页面级卡片状态（真源，保存时回注到 HTML）
+        if (cardIdx >= 0) pageCards[cardIdx] = { action: action, effects: effects };
         closeModal();
         try {
           var html = ed.getHtml();
@@ -673,10 +806,11 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
             var n1 = t.nextElementSibling;
             var n2 = n1 ? n1.nextElementSibling : null;
             var tag = lv === 2 ? 'h2' : (lv === 5 ? 'h5' : 'h3');
+            var fxAttr = effects.length ? ' data-effect="' + esc(effects.join(' ')) + '"' : '';
             var frag = document.createElement('div');
             frag.innerHTML = '<' + tag + '>' + esc(icon + ' ' + title) + '</' + tag + '>'
               + '<p>' + esc(desc) + '</p>'
-              + '<p><a href="' + esc(link) + '" data-action="' + esc(action) + '" data-effect="' + esc(effect) + '" target="_blank">' + esc(action) + ' →</a></p>';
+              + '<p><a href="' + esc(link) + '" data-action="' + esc(action) + '"' + fxAttr + ' target="_blank">' + esc(action) + ' →</a></p>';
             var parent = t.parentNode;
             while (frag.firstChild) parent.insertBefore(frag.firstChild, t);
             var old = [t];
@@ -1232,14 +1366,16 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
         if (!cur || cur.size !== it.size){ cur = { size: it.size, items: [it] }; groups.push(cur); }
         else { cur.items.push(it); }
       });
+      var seq = 0; // 卡片序号（与 pageCards / 保存顺序一致）
       function wrapCard(it, size, grid){
         var w = document.createElement('div');
-        var effect = 'none';
-        try {
-          var a = it.s2.querySelector('a');
-          if (a) effect = a.getAttribute('data-effect') || 'none';
-        } catch(e){}
-        w.className = 'lnk-card ' + size + ' lnk-effect-' + effect;
+        var st = pageCards[seq];
+        var effects = (st && st.effects) ? st.effects : [];
+        var fxCls = effects.length ? ' ' + effects.map(function(e){ return 'lnk-effect-' + e; }).join(' ') : ' lnk-effect-none';
+        w.className = 'lnk-card ' + size + fxCls;
+        w.setAttribute('data-card', seq);
+        w.setAttribute('data-card-action', (st && st.action) ? st.action : '');
+        seq++;
         it.h.parentNode.insertBefore(w, it.h);
         w.appendChild(it.h); w.appendChild(it.s1); w.appendChild(it.s2);
         if (grid) grid.appendChild(w);
@@ -1298,7 +1434,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     if (!title){ toast('请先填写标题'); return; }
     if (!currentId){ toast('请先选择或新建内容'); return; }
     var body = { title: title, hidden: document.getElementById('chk-hidden').checked };
-    if (currentType === 'page') body.content = sanitizeContent(editor.getHtml());
+    if (currentType === 'page') body.content = injectCardState(sanitizeContent(editor.getHtml()), currentCardState());
     fetch('/api/nodes/' + currentId, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },

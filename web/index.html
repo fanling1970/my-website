@@ -57,12 +57,12 @@ main{max-width:1200px;margin:0 auto;padding:24px 20px 40px}
 .article .lnk-grid{display:grid;gap:12px;margin:10px 0}
 .article .lnk-grid.md{grid-template-columns:repeat(3,minmax(0,1fr))}
 .article .lnk-grid.sm{grid-template-columns:repeat(4,minmax(0,1fr))}
-.article .lnk-card{display:flex;flex-direction:column;width:100%;border:1px solid var(--line);border-radius:10px;background:#f6f9fc;padding:14px 16px;box-sizing:border-box;margin:10px 0;transition:border-color .2s,box-shadow .2s}
-.article .lnk-card:hover{border-color:var(--brand2);box-shadow:0 4px 14px rgba(9,105,218,.18)}
+.article .lnk-card{display:flex;flex-direction:column;width:100%;border:1px solid var(--line);border-radius:10px;background:#f6f9fc;padding:14px 16px;box-sizing:border-box;margin:10px 0;transition:border-color .2s,box-shadow .2s,transform .2s}
+/* 默认（无特效）不加任何 hover 效果；特效由 lnk-effect-xxx class 决定，可多选叠加 */
+.article .lnk-card.lnk-effect-highlight:hover{border-color:var(--brand2);box-shadow:0 0 0 2px rgba(14,138,168,.2),0 4px 14px rgba(9,105,218,.12)}
 .article .lnk-card.lnk-effect-shake:hover{animation:lnk-shake .35s}
-.article .lnk-card.lnk-effect-scale:hover{transform:scale(1.03);transition:transform .2s}
+.article .lnk-card.lnk-effect-scale:hover{transform:scale(1.03)}
 .article .lnk-card.lnk-effect-glow:hover{box-shadow:0 0 0 2px rgba(14,138,168,.25),0 0 20px rgba(14,138,168,.18)}
-.article .lnk-card.lnk-effect-highlight:hover{border-color:var(--brand2);box-shadow:0 0 0 2px rgba(14,138,168,.2),0 4px 14px rgba(9,105,218,.15)}
 @keyframes lnk-shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-3px)}40%{transform:translateX(3px)}60%{transform:translateX(-2px)}80%{transform:translateX(2px)}}
 .article .lnk-grid .lnk-card{margin:0}
 .article .lnk-card.lg{width:100%}
@@ -236,6 +236,7 @@ footer{max-width:900px;margin:0 auto;padding:0 20px 26px;font-size:12px;color:va
       if (href.startsWith('/files/')) return '下载';
       return '打开';
     }
+    var FX_KEYS = ['highlight', 'shake', 'scale', 'glow'];
     function wrapCard(it, size, grid){
       var w = document.createElement('div');
       it.h.parentNode.insertBefore(w, it.h);
@@ -243,15 +244,17 @@ footer{max-width:900px;margin:0 auto;padding:0 20px 26px;font-size:12px;color:va
       if (grid) grid.appendChild(w);
       // 确保按钮文字与 data-action 一致（智能补全旧数据）
       var a = it.s2.querySelector('a');
-      var effect = 'none';
+      var effects = [];
       if (a){
         var act = a.getAttribute('data-action');
         if (!act){ act = guessAction(a); a.setAttribute('data-action', act); }
         a.textContent = act + ' →';
+        // 特效可多选，空格分隔；旧数据 default 无
         var ef = a.getAttribute('data-effect');
-        if (ef){ effect = ef; } // 旧数据没有 data-effect，保持 none
+        if (ef) effects = ef.split(/\s+/).filter(function(x){ return FX_KEYS.indexOf(x) >= 0; });
       }
-      w.className = 'lnk-card ' + size + ' lnk-effect-' + effect;
+      var fxCls = effects.length ? ' ' + effects.map(function(e){ return 'lnk-effect-' + e; }).join(' ') : ' lnk-effect-none';
+      w.className = 'lnk-card ' + size + fxCls;
       return w;
     }
     groups.forEach(function(g){
