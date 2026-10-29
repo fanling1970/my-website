@@ -193,6 +193,14 @@ footer{max-width:900px;margin:0 auto;padding:0 20px 26px;font-size:12px;color:va
   function cardify(){
     var c = document.querySelector('.article .content');
     if (!c) return;
+    // 先拆包：移除可能已存在的 lnk-grid / lnk-card wrapper（避免重复包装）
+    var wrappers = c.querySelectorAll('.lnk-grid, .lnk-card');
+    for (var wi = wrappers.length - 1; wi >= 0; wi--){
+      var w = wrappers[wi];
+      var parent = w.parentNode;
+      while (w.firstChild) parent.insertBefore(w.firstChild, w);
+      w.parentNode.removeChild(w);
+    }
     var kids = Array.prototype.slice.call(c.children);
     var items = [];
     var i = 0;
@@ -217,12 +225,26 @@ footer{max-width:900px;margin:0 auto;padding:0 20px 26px;font-size:12px;color:va
       if (!cur || cur.size !== it.size){ cur = { size: it.size, items: [it] }; groups.push(cur); }
       else { cur.items.push(it); }
     });
+    // 推断默认动作：旧数据没有 data-action 时，根据链接类型猜测
+    function guessAction(a){
+      var href = (a.getAttribute('href') || '').toLowerCase();
+      if (href.match(/\.(zip|rar|7z|tar|gz|apk|ipa|exe|msi|dmg|iso|pdf|doc|docx|xls|xlsx|ppt|pptx|mp3|mp4|mov|avi|mkv|flac|wav|psd|ai|sketch|fig)$/)) return '下载';
+      if (href.startsWith('/files/')) return '下载';
+      return '打开';
+    }
     function wrapCard(it, size, grid){
       var w = document.createElement('div');
       w.className = 'lnk-card ' + size;
       it.h.parentNode.insertBefore(w, it.h);
       w.appendChild(it.h); w.appendChild(it.s1); w.appendChild(it.s2);
       if (grid) grid.appendChild(w);
+      // 确保按钮文字与 data-action 一致（智能补全旧数据）
+      var a = it.s2.querySelector('a');
+      if (a){
+        var act = a.getAttribute('data-action');
+        if (!act){ act = guessAction(a); a.setAttribute('data-action', act); }
+        a.textContent = act + ' →';
+      }
       return w;
     }
     groups.forEach(function(g){

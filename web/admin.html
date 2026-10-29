@@ -98,6 +98,24 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
   .main{min-height:60vh}
   #editor-container{height:50vh}
 }
+/* 编辑区内链接框卡片样式（所见即所得） */
+#editor-container .lnk-grid{display:grid;gap:10px;margin:10px 0}
+#editor-container .lnk-grid.md{grid-template-columns:repeat(3,minmax(0,1fr))}
+#editor-container .lnk-grid.sm{grid-template-columns:repeat(4,minmax(0,1fr))}
+#editor-container .lnk-card{border:1px solid #d7e1ea;border-radius:10px;background:#f6f9fc;padding:10px 14px;margin:8px 0;transition:border-color .2s}
+#editor-container .lnk-card:hover{border-color:#0e8aa8}
+#editor-container .lnk-card.lg{width:100%}
+#editor-container .lnk-grid .lnk-card{margin:0}
+#editor-container .lnk-card h2,#editor-container .lnk-card h3,#editor-container .lnk-card h5{margin:0;padding:0;border:none;font-size:16px;color:#1f2d3a;background:transparent}
+#editor-container .lnk-card h2{font-size:17px}
+#editor-container .lnk-card h5{font-size:14px}
+#editor-container .lnk-card>p:first-of-type{margin:4px 0 0;font-size:13px;color:#7b8794}
+#editor-container .lnk-card>p:last-child{margin:8px 0 0}
+#editor-container .lnk-card>p:last-child a{display:inline-block;padding:4px 12px;background:#0e8aa8;color:#fff;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600}
+@media (max-width:760px){
+  #editor-container .lnk-grid.md{grid-template-columns:repeat(2,minmax(0,1fr))}
+  #editor-container .lnk-grid.sm{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
 </style>
 </head>
 <body>
@@ -160,6 +178,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
   var currentType = null;
   var editor = null;
   var expanded = {};
+  var cardifyEditor = null;   // 在 initEditor 内赋值，外部 selectNode 调用
   var statusEl = document.getElementById('status');
 
   function toast(msg){ statusEl.textContent = msg; clearTimeout(toast._t); toast._t = setTimeout(function(){ statusEl.textContent=''; }, 2500); }
@@ -357,6 +376,8 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       ea.classList.add('show');
       if (!editor) initEditor();
       setHtmlSafe(editor, sanitizeContent(n.content || '<p><br></p>'));
+      // setHtmlSafe 会触发 onChange → 300ms 后 cardify，但我们立即也执行一次让卡片立即可见
+      setTimeout(function(){ cardifyEditor(); }, 50);
     } else {
       ea.classList.remove('show');
       pa.classList.add('show');
@@ -457,13 +478,17 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       var title = em ? rawTitle.slice(em[0].length) : rawTitle;
       var desc = '';
       var link = '';
+      var curAction = '打开';
       var s1 = hEl.nextElementSibling;
-      if (s1 && s1.tagName === 'P'){ desc = (s1.textContent || '').trim(); var s2 = s1.nextElementSibling; if (s2 && s2.tagName === 'P'){ var a = s2.querySelector('a'); if (a) link = a.getAttribute('href') || ''; } }
+      if (s1 && s1.tagName === 'P'){ desc = (s1.textContent || '').trim(); var s2 = s1.nextElementSibling; if (s2 && s2.tagName === 'P'){ var a = s2.querySelector('a'); if (a){ link = a.getAttribute('href') || ''; var act = a.getAttribute('data-action'); curAction = act || curAction; } } }
       function iconOpt(v, label){
         return '<option value="' + v + '"' + (v === curIcon ? ' selected' : '') + '>' + label + '</option>';
       }
       var iconList = ['🖥','📄','🔗','📦','🌐','⚙️','🖼','📁'];
       var extraIcon = iconList.indexOf(curIcon) < 0 ? '<option value="' + curIcon + '" selected>' + curIcon + ' 当前图标</option>' : '';
+      function actionOpt(v){
+        return '<option value="' + v + '"' + (v === curAction ? ' selected' : '') + '>' + esc(v) + '</option>';
+      }
       openModal(
         '<h3>编辑链接框</h3>'
         + '<div class="mrow"><label>标题（可加图标 emoji）</label><input type="text" id="cd-title" value="' + esc(title) + '" placeholder="例如：路由器管理"></div>'
@@ -475,23 +500,58 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
         + '</select></div>'
         + '<div class="mrow"><label>介绍</label><input type="text" id="cd-desc" value="' + esc(desc) + '" placeholder="一句话介绍"></div>'
         + '<div class="mrow"><label>链接地址</label><input type="text" id="cd-link" value="' + esc(link) + '" placeholder="http://... 或 /?p=页面ID 或 /files/附件名"></div>'
+        + '<div class="mrow"><label>动作（按钮上显示的文字）</label><select id="cd-action">'
+        + actionOpt('打开')
+        + actionOpt('下载')
+        + actionOpt('访问')
+        + actionOpt('进入')
+        + actionOpt('查看')
+        + '<option value="_custom">✎ 自定义…</option>'
+        + '</select></div>'
+        + '<div class="mrow" id="cd-action-custom-row" style="display:none"><label>自定义动作文字</label><input type="text" id="cd-action-custom" placeholder="如：立即体验 →"></div>'
         + '<div class="mrow"><label>规格</label><select id="cd-size">'
         + '<option value="lg"' + (level === 2 ? ' selected' : '') + '>大号链接框</option>'
         + '<option value="md"' + (level === 3 ? ' selected' : '') + '>中号链接框</option>'
         + '<option value="sm"' + (level === 5 ? ' selected' : '') + '>小号链接框</option>'
         + '</select></div>'
-        + '<div class="mrow note">图标会显示在标题前；链接支持站内页 /?p=ID 或附件 /files/文件名</div>'
+        + '<div class="mrow note">图标会显示在标题前；链接支持站内页 /?p=ID 或附件 /files/文件名；动作决定按钮上的文字</div>'
         + '<div class="mbtn-row"><button class="mbtn mbtn-cancel" id="cd-cancel">取消</button><button class="mbtn mbtn-ok" id="cd-ok">确定</button></div>'
       );
       Array.prototype.forEach.call(document.querySelectorAll('#modal-box input, #modal-box select, #modal-box button'), function(el){
         el.addEventListener('mousedown', function(ev){ ev.stopPropagation(); });
       });
+      // 自定义动作切换
+      document.getElementById('cd-action').onchange = function(){
+        var v = this.value;
+        document.getElementById('cd-action-custom-row').style.display = (v === '_custom') ? '' : 'none';
+        if (v === '_custom'){
+          var curText = this.options[this.selectedIndex].getAttribute('data-custom') || curAction;
+          document.getElementById('cd-action-custom').value = curText;
+          document.getElementById('cd-action-custom').focus();
+        }
+      };
+      // 如果当前动作不在预设列表里，自动切到自定义模式并填好
+      if (['打开','下载','访问','进入','查看'].indexOf(curAction) < 0){
+        var sel = document.getElementById('cd-action');
+        for (var oi=0; oi<sel.options.length; oi++){ sel.options[oi].removeAttribute('data-custom'); }
+        sel.value = '_custom';
+        var customRow = document.getElementById('cd-action-custom-row');
+        customRow.style.display = '';
+        document.getElementById('cd-action-custom').value = curAction;
+      }
       document.getElementById('cd-cancel').onclick = closeModal;
       document.getElementById('cd-ok').onclick = function(){
         var title = (document.getElementById('cd-title').value || '').trim() || '标题';
         var icon = document.getElementById('cd-icon').value;
         var desc = (document.getElementById('cd-desc').value || '').trim();
         var link = (document.getElementById('cd-link').value || '').trim();
+        var actSel = document.getElementById('cd-action').value;
+        var action;
+        if (actSel === '_custom'){
+          action = (document.getElementById('cd-action-custom').value || '').trim() || '打开';
+        } else {
+          action = actSel;
+        }
         var lv = document.getElementById('cd-size').value === 'lg' ? 2 : (document.getElementById('cd-size').value === 'sm' ? 5 : 3);
         if (!link){ toast('请填写链接地址'); return; }
         closeModal();
@@ -508,7 +568,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
             var frag = document.createElement('div');
             frag.innerHTML = '<' + tag + '>' + esc(icon + ' ' + title) + '</' + tag + '>'
               + '<p>' + esc(desc) + '</p>'
-              + '<p><a href="' + esc(link) + '" target="_blank">打开 →</a></p>';
+              + '<p><a href="' + esc(link) + '" data-action="' + esc(action) + '" target="_blank">' + esc(action) + ' →</a></p>';
             var parent = t.parentNode;
             while (frag.firstChild) parent.insertBefore(frag.firstChild, t);
             var old = [t];
@@ -888,9 +948,9 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
        用 h2/h3/h5 区分 大/中/小 规格；卡片由 标题块+介绍段+打开链接段 组成，
        这是 wangEditor 往返（保存/重开）能完整保留的最小结构（实测验证）。 */
     function CardMenu(){
-      this.title = '链接框';
+      this.title = '插入链接框';
       this.tag = 'select';
-      this.width = 90;
+      this.width = 110;
       this.iconSvg = ICON.card;
       this.selectList = [
         { text: '大号链接框', value: 'lg' },
@@ -997,6 +1057,77 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
         ]
       },
       mode: 'default'
+    });
+
+    /* ---- 编辑区链接框所见即所得 cardify ----
+       在编辑器 DOM 内把 h2/h3/h5 + p(介绍) + p(链接) 识别并包装成卡片。
+       先用 debounce 避免 onChange 风暴；编辑时 cardify 可能破坏 wangEditor 内部的选区/光标位置，
+       所以用一个标记 isTyping 来区分"用户正在输入"和"选中节点/操作菜单"场景。
+       实际上这里只是加 wrapper div 并把结构搬进去，对编辑器的影响可控。 */
+    var isCardifying = false;
+    function unCardifyEditor(){
+      // 把已有的 lnk-grid / lnk-card wrapper 拆掉，内容恢复为原始 h2/h3/h5 + p + p 结构
+      var box = document.getElementById('editor-container');
+      if (!box) return;
+      var wrappers = box.querySelectorAll('.lnk-grid, .lnk-card');
+      for (var wi = wrappers.length - 1; wi >= 0; wi--){
+        var w = wrappers[wi];
+        var parent = w.parentNode;
+        while (w.firstChild) parent.insertBefore(w.firstChild, w);
+        w.parentNode.removeChild(w);
+      }
+    }
+    cardifyEditor = function(){
+      if (isCardifying) return; // 防止 setHtmlSafe 里的 cardify 递归触发 onChange
+      var box = document.getElementById('editor-container');
+      if (!box) return;
+      isCardifying = true;
+      unCardifyEditor();
+      var kids = Array.prototype.slice.call(box.children);
+      var items = [];
+      var i = 0;
+      while (i < kids.length){
+        var el = kids[i];
+        if (/^H[235]$/.test(el.tagName)){
+          var s1 = el.nextElementSibling, s2 = s1 && s1.nextElementSibling;
+          if (s1 && s1.tagName === 'P' && s2 && s2.tagName === 'P' && s2.querySelector('a')){
+            items.push({ h: el, s1: s1, s2: s2, size: el.tagName });
+            i += 3;
+            continue;
+          }
+        }
+        if (el.tagName === 'P' && (el.innerHTML === '<br>' || (el.textContent || '').trim() === '')){ i++; continue; }
+        items.push(null);
+        i++;
+      }
+      var groups = [], cur = null;
+      items.forEach(function(it){
+        if (!it){ cur = null; return; }
+        if (!cur || cur.size !== it.size){ cur = { size: it.size, items: [it] }; groups.push(cur); }
+        else { cur.items.push(it); }
+      });
+      function wrapCard(it, size, grid){
+        var w = document.createElement('div');
+        w.className = 'lnk-card ' + size;
+        it.h.parentNode.insertBefore(w, it.h);
+        w.appendChild(it.h); w.appendChild(it.s1); w.appendChild(it.s2);
+        if (grid) grid.appendChild(w);
+        return w;
+      }
+      groups.forEach(function(g){
+        if (g.size === 'H2'){ g.items.forEach(function(it){ wrapCard(it, 'lg', null); }); return; }
+        var size = g.size === 'H5' ? 'sm' : 'md';
+        var grid = document.createElement('div');
+        grid.className = 'lnk-grid ' + size;
+        g.items[0].h.parentNode.insertBefore(grid, g.items[0].h);
+        g.items.forEach(function(it){ wrapCard(it, size, grid); });
+      });
+      isCardifying = false;
+    };
+    var cardifyTimer = null;
+    editor.on('change', function(){
+      clearTimeout(cardifyTimer);
+      cardifyTimer = setTimeout(cardifyEditor, 300);
     });
   }
 
