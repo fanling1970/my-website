@@ -116,13 +116,27 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
   #editor-container .lnk-grid.md{grid-template-columns:repeat(2,minmax(0,1fr))}
   #editor-container .lnk-grid.sm{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
+/* 设置弹窗样式 */
+.s-set{margin-bottom:18px}
+.s-head{font-size:13px;font-weight:600;color:#34495a;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.theme-row{display:flex;flex-wrap:wrap;gap:10px}
+.theme-opt{position:relative;cursor:pointer;border-radius:10px;padding:10px 12px 8px;border:2px solid transparent;transition:all .15s;background:#f6f9fc;text-align:center;font-size:12px;color:#34495a}
+.theme-opt:hover{border-color:var(--brand2)}
+.theme-opt.selected{border-color:var(--brand2);background:#eaf5f8;box-shadow:0 0 0 3px rgba(14,138,168,.15)}
+.theme-opt .swatch{width:34px;height:24px;border-radius:6px;margin:0 auto 5px;border-top:5px solid;border-right:6px solid;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.theme-opt .tname{font-weight:600}
+/* 编辑区 link card 特效 class（与前台保持一致） */
+#editor-container .lnk-card.lnk-effect-shake:hover{animation:lnk-shake .35s}
+#editor-container .lnk-card.lnk-effect-scale:hover{transform:scale(1.03);transition:transform .2s}
+#editor-container .lnk-card.lnk-effect-glow:hover{box-shadow:0 0 0 2px rgba(14,138,168,.25),0 0 20px rgba(14,138,168,.18)}
+@keyframes lnk-shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-3px)}40%{transform:translateX(3px)}60%{transform:translateX(-2px)}80%{transform:translateX(2px)}}
 </style>
 </head>
 <body>
 <div class="app">
   <aside class="side">
     <div class="side-head">
-      <div class="logo">秋风小站</div>
+      <div class="logo" id="site-logo">秋风小站</div>
       <div class="btn-row">
         <button id="btn-new" class="btn-s btn-new">＋ 新建页面</button>
         <button id="btn-folder" class="btn-s btn-folder">＋ 文件夹</button>
@@ -130,7 +144,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       </div>
     </div>
     <div class="tree-wrap"><ul id="tree" class="tree"></ul></div>
-    <div class="side-foot"><a href="/" target="_blank">查看前台 →</a><a href="#" id="btn-settings">修改密码</a><a href="#" id="btn-logout">退出登录</a></div>
+    <div class="side-foot"><a href="/" target="_blank">查看前台 →</a><a href="#" id="btn-settings">⚙ 设置</a><a href="#" id="btn-logout">退出登录</a></div>
   </aside>
   <main class="main">
     <div class="editor-head">
@@ -271,34 +285,115 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
   }
   document.getElementById('mask').addEventListener('click', function(e){ if(e.target === this) closeModal(); });
 
-  /* ============ 修改密码 ============ */
-  function openPasswordModal(){
-    openModal('<h3 style="margin:0 0 6px">修改密码</h3>'
-      + '<p style="margin:0 0 16px;font-size:13px;color:#5b7080">输入当前密码，再设置新密码并确认</p>'
-      + '<input id="pw-old" type="password" placeholder="当前密码" style="width:100%;padding:10px 12px;border:1px solid #d7e0e6;border-radius:8px;margin-bottom:10px;font-size:14px;box-sizing:border-box">'
-      + '<input id="pw-new" type="password" placeholder="新密码" style="width:100%;padding:10px 12px;border:1px solid #d7e0e6;border-radius:8px;margin-bottom:10px;font-size:14px;box-sizing:border-box">'
-      + '<input id="pw-confirm" type="password" placeholder="再次输入新密码" style="width:100%;padding:10px 12px;border:1px solid #d7e0e6;border-radius:8px;margin-bottom:14px;font-size:14px;box-sizing:border-box">'
-      + '<div style="display:flex;gap:10px">'
-      + '<button id="pw-save" style="flex:1;padding:10px;border:none;border-radius:8px;background:#0d4a63;color:#fff;font-size:14px;font-weight:600;cursor:pointer">保存</button>'
-      + '<button id="pw-cancel" style="flex:1;padding:10px;border:1px solid #d7e0e6;border-radius:8px;background:#fff;color:#5b7080;font-size:14px;cursor:pointer">取消</button>'
-      + '</div>');
-    document.getElementById('pw-cancel').onclick = closeModal;
-    document.getElementById('pw-save').onclick = function(){
-      var oldp = document.getElementById('pw-old').value;
-      var np = document.getElementById('pw-new').value;
-      var np2 = document.getElementById('pw-confirm').value;
-      if (!oldp || !np){ toast('请填写完整'); return; }
-      if (np !== np2){ toast('两次新密码不一致'); return; }
-      var fd = new FormData();
-      fd.append('old', oldp); fd.append('new', np); fd.append('confirm', np2);
-      var btn = this; btn.disabled = true;
-      fetch('/api/change-password', { method: 'POST', body: fd }).then(function(r){ return r.json(); }).then(function(d){
-        btn.disabled = false;
-        if (d.ok){ closeModal(); toast('密码已修改，下次登录请使用新密码'); }
-        else { toast(d.err || '修改失败'); }
-      }).catch(function(){ btn.disabled = false; toast('网络错误'); });
+  /* ============ 站点设置 ============ */
+  // 主题预设（与后端 themePresets 保持一致）
+  var THEMES = [
+    { key: 'cyan',   name: '青',   brand: '#1b4a6b', brand2: '#0e8aa8', accent: '#e8890c' },
+    { key: 'blue',   name: '蓝',   brand: '#1a3c6e', brand2: '#2b7cff', accent: '#ff7a45' },
+    { key: 'purple', name: '紫',   brand: '#4b2d73', brand2: '#8a5cf6', accent: '#ffb84d' },
+    { key: 'green',  name: '绿',   brand: '#1f5e3a', brand2: '#2ba86f', accent: '#f08c00' },
+    { key: 'pink',   name: '粉',   brand: '#6a1b4b', brand2: '#d43f7c', accent: '#ffc400' },
+    { key: 'dark',   name: '黑',   brand: '#111111', brand2: '#444444', accent: '#999999' }
+  ];
+  var currentSettings = { siteName: '秋风小站', theme: 'cyan' };
+
+  function applySettingsToDom(s){
+    if (!s) return;
+    currentSettings = s;
+    var name = s.siteName || '秋风小站';
+    document.getElementById('site-logo').textContent = name;
+    document.title = '内容管理 - ' + name;
+    if (document.getElementById('title')) document.getElementById('title').placeholder = '输入标题…';
+    var p = THEMES.find(function(t){ return t.key === s.theme; }) || THEMES[0];
+    var r = document.documentElement.style;
+    r.setProperty('--brand', p.brand);
+    r.setProperty('--brand2', p.brand2);
+    r.setProperty('--accent', p.accent);
+  }
+
+  function loadSettings(){
+    fetch('/api/settings').then(function(r){ return r.json(); }).then(function(s){ applySettingsToDom(s); }).catch(function(){});
+  }
+
+  function openSettingsModal(){
+    var selected = currentSettings.theme || 'cyan';
+    var themeHTML = THEMES.map(function(t){
+      var sel = t.key === selected ? ' selected' : '';
+      return '<label class="theme-opt' + sel + '" data-theme="' + t.key + '">'
+        + '<span class="swatch" style="background:' + t.brand2 + ';border-top-color:' + t.brand + ';border-right-color:' + t.accent + '"></span>'
+        + '<span class="tname">' + t.name + '</span>'
+        + '</label>';
+    }).join('');
+
+    openModal(
+      '<h3 style="margin:0 0 6px">站点设置</h3>'
+      + '<p style="margin:0 0 16px;font-size:13px;color:#5b7080">网站外观与账号</p>'
+      // 网站名称
+      + '<div class="s-set">'
+      + '<div class="s-head">📌 网站名称</div>'
+      + '<input id="s-name" type="text" value="' + esc(currentSettings.siteName || '') + '" placeholder="显示在左上角" style="width:100%;padding:10px 12px;border:1px solid #d7e0e6;border-radius:8px;font-size:14px;box-sizing:border-box">'
+      + '</div>'
+      // 主题色
+      + '<div class="s-set">'
+      + '<div class="s-head">🎨 主题色</div>'
+      + '<div class="theme-row">' + themeHTML + '</div>'
+      + '<input type="hidden" id="s-theme" value="' + esc(selected) + '">'
+      + '</div>'
+      // 修改密码
+      + '<div class="s-set">'
+      + '<div class="s-head">🔒 修改密码</div>'
+      + '<input id="pw-old" type="password" placeholder="当前密码" style="width:100%;padding:10px 12px;border:1px solid #d7e0e6;border-radius:8px;margin-bottom:8px;font-size:14px;box-sizing:border-box">'
+      + '<input id="pw-new" type="password" placeholder="新密码（留空则不修改）" style="width:100%;padding:10px 12px;border:1px solid #d7e0e6;border-radius:8px;margin-bottom:8px;font-size:14px;box-sizing:border-box">'
+      + '<input id="pw-confirm" type="password" placeholder="再次输入新密码" style="width:100%;padding:10px 12px;border:1px solid #d7e0e6;border-radius:8px;font-size:14px;box-sizing:border-box">'
+      + '</div>'
+      + '<div class="mbtn-row"><button class="mbtn mbtn-cancel" id="s-cancel">取消</button><button class="mbtn mbtn-ok" id="s-ok">保存</button></div>'
+    );
+    // 阻止 mousedown 冒泡（避免面板被 mask 关闭）
+    Array.prototype.forEach.call(document.querySelectorAll('#modal-box input,#modal-box button,#modal-box label'), function(el){
+      el.addEventListener('mousedown', function(ev){ ev.stopPropagation(); });
+    });
+    // 主题色单选
+    document.querySelectorAll('#modal-box .theme-opt').forEach(function(lab){
+      lab.addEventListener('click', function(){
+        document.querySelectorAll('#modal-box .theme-opt').forEach(function(x){ x.classList.remove('selected'); });
+        lab.classList.add('selected');
+        document.getElementById('s-theme').value = lab.getAttribute('data-theme');
+      });
+    });
+    document.getElementById('s-cancel').onclick = closeModal;
+    document.getElementById('s-ok').onclick = function(){
+      var name = (document.getElementById('s-name').value || '').trim();
+      if (!name){ toast('网站名称不能为空'); return; }
+      var theme = document.getElementById('s-theme').value || 'cyan';
+      // 先保存站点设置
+      var settingsBody = JSON.stringify({ siteName: name, theme: theme });
+      fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: settingsBody }).then(function(r){
+        if (!r.ok) return r.json().then(function(d){ throw new Error(d.error || '保存失败'); });
+        return r.json();
+      }).then(function(s){
+        applySettingsToDom(s);
+        // 若新密码不为空，再修改密码
+        var np = document.getElementById('pw-new').value;
+        var np2 = document.getElementById('pw-confirm').value;
+        if (!np){ closeModal(); toast('设置已保存'); return null; }
+        var oldp = document.getElementById('pw-old').value;
+        if (!oldp || np !== np2){ toast('请填写旧密码并确保两次新密码一致'); return null; }
+        var fd = new FormData();
+        fd.append('old', oldp); fd.append('new', np); fd.append('confirm', np2);
+        return fetch('/api/change-password', { method: 'POST', body: fd }).then(function(r){ return r.json(); }).then(function(d){
+          if (!d.ok){ throw new Error(d.err || '密码修改失败'); }
+          return { ok: true };
+        });
+      }).then(function(ret){
+        if (ret === null) return;
+        closeModal();
+        toast('设置已保存，密码已修改');
+      }).catch(function(err){ toast(err.message || '保存失败'); });
     };
   }
+
+  // openPasswordModal 已合并到 openSettingsModal，保留一个空壳避免旧引用报错
+  function openPasswordModal(){ openSettingsModal(); }
 
   /* ============ 树 ============ */
   function renderTree(){
@@ -482,12 +577,13 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       var desc = '';
       var link = '';
       var curAction = '打开';
+      var curEffect = 'none';
       var s1 = hEl.nextElementSibling;
-      if (s1 && s1.tagName === 'P'){ desc = (s1.textContent || '').trim(); var s2 = s1.nextElementSibling; if (s2 && s2.tagName === 'P'){ var a = s2.querySelector('a'); if (a){ link = a.getAttribute('href') || ''; var act = a.getAttribute('data-action'); curAction = act || curAction; } } }
+      if (s1 && s1.tagName === 'P'){ desc = (s1.textContent || '').trim(); var s2 = s1.nextElementSibling; if (s2 && s2.tagName === 'P'){ var a = s2.querySelector('a'); if (a){ link = a.getAttribute('href') || ''; var act = a.getAttribute('data-action'); curAction = act || curAction; var ef = a.getAttribute('data-effect'); curEffect = ef || 'none'; } } }
       function iconOpt(v, label){
         return '<option value="' + v + '"' + (v === curIcon ? ' selected' : '') + '>' + label + '</option>';
       }
-      var iconList = ['🖥','📄','🔗','📦','🌐','⚙️','🖼','📁'];
+      var iconList = ['🖥','📄','🔗','📦','🌐','⚙️','🖼','📁','📊','📈'];
       var extraIcon = iconList.indexOf(curIcon) < 0 ? '<option value="' + curIcon + '" selected>' + curIcon + ' 当前图标</option>' : '';
       function actionOpt(v){
         return '<option value="' + v + '"' + (v === curAction ? ' selected' : '') + '>' + esc(v) + '</option>';
@@ -500,6 +596,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
         + iconOpt('🖥', '🖥 服务器/系统') + iconOpt('📄', '📄 文档') + iconOpt('🔗', '🔗 链接')
         + iconOpt('📦', '📦 软件') + iconOpt('🌐', '🌐 网站') + iconOpt('⚙️', '⚙️ 设置')
         + iconOpt('🖼', '🖼 图片') + iconOpt('📁', '📁 文件夹')
+        + iconOpt('📊', '📊 图表') + iconOpt('📈', '📈 趋势')
         + '</select></div>'
         + '<div class="mrow"><label>介绍</label><input type="text" id="cd-desc" value="' + esc(desc) + '" placeholder="一句话介绍"></div>'
         + '<div class="mrow"><label>链接地址</label><input type="text" id="cd-link" value="' + esc(link) + '" placeholder="http://... 或 /?p=页面ID 或 /files/附件名"></div>'
@@ -512,6 +609,13 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
         + '<option value="_custom">✎ 自定义…</option>'
         + '</select></div>'
         + '<div class="mrow" id="cd-action-custom-row" style="display:none"><label>自定义动作文字</label><input type="text" id="cd-action-custom" placeholder="如：立即体验 →"></div>'
+        + '<div class="mrow"><label>特效（鼠标悬停时的效果）</label><select id="cd-effect">'
+        + '<option value="none"' + (curEffect === 'none' ? ' selected' : '') + '>无（默认）</option>'
+        + '<option value="highlight"' + (curEffect === 'highlight' ? ' selected' : '') + '>边框高亮</option>'
+        + '<option value="shake"' + (curEffect === 'shake' ? ' selected' : '') + '>轻微晃动</option>'
+        + '<option value="scale"' + (curEffect === 'scale' ? ' selected' : '') + '>平滑放大</option>'
+        + '<option value="glow"' + (curEffect === 'glow' ? ' selected' : '') + '>发光光晕</option>'
+        + '</select></div>'
         + '<div class="mrow"><label>规格</label><select id="cd-size">'
         + '<option value="lg"' + (level === 2 ? ' selected' : '') + '>大号链接框</option>'
         + '<option value="md"' + (level === 3 ? ' selected' : '') + '>中号链接框</option>'
@@ -556,6 +660,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
           action = actSel;
         }
         var lv = document.getElementById('cd-size').value === 'lg' ? 2 : (document.getElementById('cd-size').value === 'sm' ? 5 : 3);
+        var effect = document.getElementById('cd-effect').value || 'none';
         if (!link){ toast('请填写链接地址'); return; }
         closeModal();
         try {
@@ -571,7 +676,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
             var frag = document.createElement('div');
             frag.innerHTML = '<' + tag + '>' + esc(icon + ' ' + title) + '</' + tag + '>'
               + '<p>' + esc(desc) + '</p>'
-              + '<p><a href="' + esc(link) + '" data-action="' + esc(action) + '" target="_blank">' + esc(action) + ' →</a></p>';
+              + '<p><a href="' + esc(link) + '" data-action="' + esc(action) + '" data-effect="' + esc(effect) + '" target="_blank">' + esc(action) + ' →</a></p>';
             var parent = t.parentNode;
             while (frag.firstChild) parent.insertBefore(frag.firstChild, t);
             var old = [t];
@@ -999,6 +1104,8 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
         { text: '⚙️ 设置', value: '⚙️' },
         { text: '🖼 图片', value: '🖼' },
         { text: '📁 文件夹', value: '📁' },
+        { text: '📊 图表', value: '📊' },
+        { text: '📈 趋势', value: '📈' },
         { text: '⭐ 常用', value: '⭐' },
         { text: '📺 影视', value: '📺' },
         { text: '🎵 音乐', value: '🎵' },
@@ -1127,7 +1234,12 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       });
       function wrapCard(it, size, grid){
         var w = document.createElement('div');
-        w.className = 'lnk-card ' + size;
+        var effect = 'none';
+        try {
+          var a = it.s2.querySelector('a');
+          if (a) effect = a.getAttribute('data-effect') || 'none';
+        } catch(e){}
+        w.className = 'lnk-card ' + size + ' lnk-effect-' + effect;
         it.h.parentNode.insertBefore(w, it.h);
         w.appendChild(it.h); w.appendChild(it.s1); w.appendChild(it.s2);
         if (grid) grid.appendChild(w);
@@ -1231,7 +1343,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
   document.getElementById('btn-new').onclick = function(){ createNode('page'); };
   document.getElementById('btn-folder').onclick = function(){ createNode('folder'); };
   document.getElementById('btn-upload').onclick = uploadAttachment;
-  document.getElementById('btn-settings').onclick = openPasswordModal;
+  document.getElementById('btn-settings').onclick = openSettingsModal;
   document.getElementById('btn-logout').onclick = function(e){
     e.preventDefault();
     if (!confirm('确定退出登录吗？')){ return; }
@@ -1255,6 +1367,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     });
   }
   requireSession();
+  loadSettings();
   window.addEventListener('pageshow', function(e){ if (e.persisted) requireSession(); });
 
   loadAll();

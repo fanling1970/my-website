@@ -58,7 +58,11 @@ main{max-width:1200px;margin:0 auto;padding:24px 20px 40px}
 .article .lnk-grid.md{grid-template-columns:repeat(3,minmax(0,1fr))}
 .article .lnk-grid.sm{grid-template-columns:repeat(4,minmax(0,1fr))}
 .article .lnk-card{display:flex;flex-direction:column;width:100%;border:1px solid var(--line);border-radius:10px;background:#f6f9fc;padding:14px 16px;box-sizing:border-box;margin:10px 0;transition:border-color .2s,box-shadow .2s}
-.article .lnk-card:hover{border-color:var(--brand2);box-shadow:0 4px 14px rgba(9,105,218,.18);animation:lnk-shake .35s}
+.article .lnk-card:hover{border-color:var(--brand2);box-shadow:0 4px 14px rgba(9,105,218,.18)}
+.article .lnk-card.lnk-effect-shake:hover{animation:lnk-shake .35s}
+.article .lnk-card.lnk-effect-scale:hover{transform:scale(1.03);transition:transform .2s}
+.article .lnk-card.lnk-effect-glow:hover{box-shadow:0 0 0 2px rgba(14,138,168,.25),0 0 20px rgba(14,138,168,.18)}
+.article .lnk-card.lnk-effect-highlight:hover{border-color:var(--brand2);box-shadow:0 0 0 2px rgba(14,138,168,.2),0 4px 14px rgba(9,105,218,.15)}
 @keyframes lnk-shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-3px)}40%{transform:translateX(3px)}60%{transform:translateX(-2px)}80%{transform:translateX(2px)}}
 .article .lnk-grid .lnk-card{margin:0}
 .article .lnk-card.lg{width:100%}
@@ -234,17 +238,20 @@ footer{max-width:900px;margin:0 auto;padding:0 20px 26px;font-size:12px;color:va
     }
     function wrapCard(it, size, grid){
       var w = document.createElement('div');
-      w.className = 'lnk-card ' + size;
       it.h.parentNode.insertBefore(w, it.h);
       w.appendChild(it.h); w.appendChild(it.s1); w.appendChild(it.s2);
       if (grid) grid.appendChild(w);
       // 确保按钮文字与 data-action 一致（智能补全旧数据）
       var a = it.s2.querySelector('a');
+      var effect = 'none';
       if (a){
         var act = a.getAttribute('data-action');
         if (!act){ act = guessAction(a); a.setAttribute('data-action', act); }
         a.textContent = act + ' →';
+        var ef = a.getAttribute('data-effect');
+        if (ef){ effect = ef; } // 旧数据没有 data-effect，保持 none
       }
+      w.className = 'lnk-card ' + size + ' lnk-effect-' + effect;
       return w;
     }
     groups.forEach(function(g){
@@ -262,6 +269,32 @@ footer{max-width:900px;margin:0 auto;padding:0 20px 26px;font-size:12px;color:va
   var fid = params.get('f');
   // 用不含登录信息的绝对地址请求数据（避免 URL 残留凭据时 fetch 报错）
   var apiBase = location.protocol + '//' + location.host;
+
+  // 主题预设（与后端保持一致）
+  var THEMES = [
+    { key: 'cyan',   brand: '#1b4a6b', brand2: '#0e8aa8', accent: '#e8890c' },
+    { key: 'blue',   brand: '#1a3c6e', brand2: '#2b7cff', accent: '#ff7a45' },
+    { key: 'purple', brand: '#4b2d73', brand2: '#8a5cf6', accent: '#ffb84d' },
+    { key: 'green',  brand: '#1f5e3a', brand2: '#2ba86f', accent: '#f08c00' },
+    { key: 'pink',   brand: '#6a1b4b', brand2: '#d43f7c', accent: '#ffc400' },
+    { key: 'dark',   brand: '#111111', brand2: '#444444', accent: '#999999' }
+  ];
+  function applySettings(s){
+    if (!s) return;
+    var name = s.siteName || '秋风小站';
+    document.getElementById('logo').innerHTML = '<span class="dot"></span>' + esc(name);
+    document.title = name;
+    var footer = document.querySelector('footer');
+    if (footer) footer.textContent = name + ' · 基于 LAN-CMS';
+    var p = THEMES.find(function(t){ return t.key === s.theme; }) || THEMES[0];
+    var r = document.documentElement.style;
+    r.setProperty('--brand', p.brand);
+    r.setProperty('--brand2', p.brand2);
+    r.setProperty('--accent', p.accent);
+  }
+
+  fetch(apiBase + '/api/settings').then(function(r){ return r.json(); }).then(applySettings).catch(function(){});
+
   fetch(apiBase + '/api/nodes').then(function(r){ return r.json(); }).then(function(list){
     allNodes = list;
     if (pid){ renderPage(pid); }

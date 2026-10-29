@@ -366,6 +366,64 @@ func decryptData(ct []byte) ([]byte, error) {
 	return gcm.Open(nil, nonce, payload, nil)
 }
 
+// ---------- 站点设置（主题、名称） ----------
+type SiteSettings struct {
+	SiteName string `json:"siteName"`
+	Theme    string `json:"theme"` // 预设主题标识
+}
+
+var (
+	settingsPath string
+	settingsMu   sync.Mutex
+)
+
+// 主题预设：每个预设对应一组 CSS 变量
+var themePresets = map[string]map[string]string{
+	"cyan":   {"--brand": "#1b4a6b", "--brand2": "#0e8aa8", "--accent": "#e8890c"}, // 默认（原主题）
+	"blue":   {"--brand": "#1a3c6e", "--brand2": "#2b7cff", "--accent": "#ff7a45"},
+	"purple": {"--brand": "#4b2d73", "--brand2": "#8a5cf6", "--accent": "#ffb84d"},
+	"green":  {"--brand": "#1f5e3a", "--brand2": "#2ba86f", "--accent": "#f08c00"},
+	"pink":   {"--brand": "#6a1b4b", "--brand2": "#d43f7c", "--accent": "#ffc400"},
+	"dark":   {"--brand": "#111111", "--brand2": "#444444", "--accent": "#999999"},
+}
+
+func loadSettings() SiteSettings {
+	settingsMu.Lock()
+	defer settingsMu.Unlock()
+	def := SiteSettings{SiteName: "秋风小站", Theme: "cyan"}
+	if settingsPath == "" {
+		return def
+	}
+	b, err := os.ReadFile(settingsPath)
+	if err != nil {
+		saveSettingsLocked(def)
+		return def
+	}
+	var s SiteSettings
+	if json.Unmarshal(b, &s) != nil {
+		return def
+	}
+	if s.SiteName == "" {
+		s.SiteName = def.SiteName
+	}
+	if _, ok := themePresets[s.Theme]; !ok {
+		s.Theme = def.Theme
+	}
+	return s
+}
+
+func saveSettingsLocked(s SiteSettings) {
+	if settingsPath == "" {
+		return
+	}
+	tmp := settingsPath + ".tmp"
+	if b, err := json.MarshalIndent(s, "", "  "); err == nil {
+		if os.WriteFile(tmp, b, 0o644) == nil {
+			_ = os.Rename(tmp, settingsPath)
+		}
+	}
+}
+
 func loadAuth() (authInfo, bool) {
 	b, err := os.ReadFile(authPath)
 	if err != nil {
@@ -468,7 +526,9 @@ func main() {
 	uploadsDir := filepath.Join(dataDir, "uploads")
 	filesDir := filepath.Join(dataDir, "files")
 	authPath = filepath.Join(dataDir, "auth.json")
+	settingsPath = filepath.Join(dataDir, "settings.json")
 	migrateAuthIfNeeded()
+	_ = loadSettings() // 首次启动写默认 settings.json
 
 	mux := http.NewServeMux()
 
@@ -729,6 +789,32 @@ func main() {
 	})
 	mux.HandleFunc("GET /api/session", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]bool{"ok": true})
+	}))
+	// 站点设置：GET 公开（前台也要读），PUT 需登录
+	mux.HandleFunc("GET /api/settings", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, loadSettings())
+	})
+	mux.HandleFunc("PUT /api/settings", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		var req SiteSettings
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "请求格式错误"})
+			return
+		}
+		req.SiteName = strings.TrimSpace(req.SiteName)
+		if req.SiteName == "" {
+			writeJSON(w, 400, map[string]string{"error": "网站名称不能为空"})
+			return
+		}
+		if _, ok := themePresets[req.Theme]; !ok {
+			req.Theme = "cyan"
+		}
+		if len(req.SiteName) > 40 {
+			req.SiteName = req.SiteName[:40]
+		}
+		settingsMu.Lock()
+		saveSettingsLocked(req)
+		settingsMu.Unlock()
+		writeJSON(w, 200, req)
 	}))
 	mux.HandleFunc("GET /admin", authMiddleware(servePage("admin.html", "no-store")))
 	mux.HandleFunc("GET /", servePage("index.html", "no-cache"))
