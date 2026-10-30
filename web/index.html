@@ -85,6 +85,13 @@ main{max-width:1200px;margin:0 auto;padding:24px 20px 40px}
 .article .vdo-wrap video{display:block;width:100%;border-radius:10px;background:#000;cursor:pointer}
 .article .vdo-big{position:absolute;top:10px;right:10px;padding:5px 12px;border-radius:6px;background:rgba(17,24,32,.62);color:#fff;font-size:12px;text-decoration:none;backdrop-filter:blur(2px)}
 .article .vdo-big:hover{background:var(--brand2);text-decoration:none}
+.article .vdo-wrap iframe{display:block;width:100%;aspect-ratio:16/9;border:0;border-radius:10px;background:#000}
+.article .audio-box{margin:16px 0;padding:8px 14px;border:1px solid #e3eaf1;border-radius:10px;background:#fafcfd}
+.article .audio-box-title{font-size:13px;color:#7a8a99;padding:2px 0 6px}
+.article .audio-row{display:flex;align-items:center;gap:10px;padding:7px 0}
+.article .audio-row + .audio-row{border-top:1px dashed #e8eef4}
+.article .audio-name{flex:0 1 40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;color:#2c3e50}
+.article .audio-row audio{flex:1 1 auto;min-width:0;height:34px}
 @media (max-width:760px){
   .article .lnk-grid.md{grid-template-columns:repeat(2,minmax(0,1fr))}
   .article .lnk-grid.sm{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -323,6 +330,77 @@ footer{max-width:900px;margin:0 auto;padding:0 20px 26px;font-size:12px;color:va
       slot.parentNode.insertBefore(wrap, slot);
       wrap.appendChild(slot);
       wrap.appendChild(bigBtn);
+    });
+    // B站等第三方嵌入视频（iframe）：包一层容器，右上角给"原网页"入口
+    Array.prototype.forEach.call(content.querySelectorAll('div[data-w-e-type="video"] iframe'), function(f){
+      var holder = f.parentNode;
+      if (!holder || !holder.parentNode) return;
+      if (holder.parentNode.classList && holder.parentNode.classList.contains('vdo-wrap')) return;
+      var wrap = document.createElement('div');
+      wrap.className = 'vdo-wrap';
+      holder.parentNode.insertBefore(wrap, holder);
+      wrap.appendChild(holder);
+      var fsrc = f.getAttribute('src') || '';
+      var m = fsrc.match(/bvid=(BV[0-9A-Za-z]+)/i);
+      if (m){
+        var b = document.createElement('a');
+        b.className = 'vdo-big';
+        b.href = 'https://www.bilibili.com/video/' + m[1] + '/';
+        b.target = '_blank';
+        b.rel = 'noopener';
+        b.textContent = 'B站原页 ↗';
+        wrap.appendChild(b);
+      }
+    });
+    // 音频链接段落 → 播放器；连续多个自动合并为播放列表（后台"插入音乐"生成 🎵 链接段）
+    var audioRe = /\.(mp3|m4a|ogg|oga|wav|flac|aac)(\?.*|#.*)?$/i;
+    Array.prototype.forEach.call(content.querySelectorAll('a'), function(a){
+      var href = a.getAttribute('href') || '';
+      if (!audioRe.test(href)) return;
+      if (a.getAttribute('data-action')) return;          // 链接框卡片的动作按钮不转换
+      if (a.closest && a.closest('.lnk-card')) return;    // 卡片内链接不转换
+      var p = a.closest ? a.closest('p') : null;
+      if (!p || !content.contains(p) || !p.parentNode) return;
+      if ((p.textContent || '').trim() !== (a.textContent || '').trim()) return; // 段落里还有其他文字则不转换
+      var row = document.createElement('div');
+      row.className = 'audio-row';
+      var nm = document.createElement('div');
+      nm.className = 'audio-name';
+      var name = (a.textContent || '').trim().replace(/^🎵\s*/, '');
+      if (!name){ try { name = decodeURIComponent(href.split('/').pop().split('?')[0]); } catch(e){ name = '音频'; } }
+      nm.textContent = name;
+      nm.title = name;
+      var au = document.createElement('audio');
+      au.setAttribute('controls', 'controls');
+      au.setAttribute('preload', 'none');
+      au.src = href;
+      row.appendChild(nm);
+      row.appendChild(au);
+      var prev = p.previousElementSibling;
+      var box = (prev && prev.classList && prev.classList.contains('audio-box')) ? prev : null;
+      if (!box){
+        box = document.createElement('div');
+        box.className = 'audio-box';
+        p.parentNode.insertBefore(box, p);
+      }
+      box.appendChild(row);
+      p.parentNode.removeChild(p);
+    });
+    // 播放列表标题 + 同时只播放一个
+    Array.prototype.forEach.call(content.querySelectorAll('.audio-box'), function(box){
+      var rows = box.querySelectorAll('.audio-row');
+      if (rows.length > 1){
+        var t = document.createElement('div');
+        t.className = 'audio-box-title';
+        t.textContent = '🎵 播放列表（共 ' + rows.length + ' 首）';
+        box.insertBefore(t, box.firstChild);
+      }
+    });
+    var audios = content.querySelectorAll('audio');
+    Array.prototype.forEach.call(audios, function(au){
+      au.addEventListener('play', function(){
+        Array.prototype.forEach.call(audios, function(o){ if (o !== au) o.pause(); });
+      });
     });
   }
   function copyText(text, btn){
