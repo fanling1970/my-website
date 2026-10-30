@@ -74,6 +74,17 @@ main{max-width:1200px;margin:0 auto;padding:24px 20px 40px}
 .article .lnk-card>p:last-child{margin:9px 0 0}
 .article .lnk-card>p:last-child a{display:inline-block;padding:5px 14px;background:var(--brand2);color:#fff;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600}
 .article .lnk-card>p:last-child a:hover{opacity:.9;text-decoration:none}
+/* 文本框（代码块外观）*/
+.article pre{position:relative;margin:16px 0;padding:20px 20px 20px 22px;border:1px solid #e3e8ee;border-radius:10px;background:#f7f9fb;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;line-height:1.7;color:#2b3440;overflow:auto;max-height:460px;white-space:pre-wrap;word-break:break-word}
+.article pre code{font-family:inherit;font-size:inherit;background:transparent;padding:0;white-space:pre-wrap}
+.article pre .pre-copy{position:absolute;top:10px;right:10px;padding:4px 12px;border:1px solid #dbe4ec;border-radius:6px;background:#fff;color:#2c3e50;font-size:12px;cursor:pointer;opacity:.55;transition:opacity .2s,background .2s}
+.article pre:hover .pre-copy{opacity:1}
+.article pre .pre-copy:hover{background:#eef6f9;color:var(--brand2)}
+/* 视频（封面 + 大屏播放）*/
+.article .vdo-wrap{position:relative;margin:16px 0;max-width:640px}
+.article .vdo-wrap video{display:block;width:100%;border-radius:10px;background:#000;cursor:pointer}
+.article .vdo-big{position:absolute;top:10px;right:10px;padding:5px 12px;border-radius:6px;background:rgba(17,24,32,.62);color:#fff;font-size:12px;text-decoration:none;backdrop-filter:blur(2px)}
+.article .vdo-big:hover{background:var(--brand2);text-decoration:none}
 @media (max-width:760px){
   .article .lnk-grid.md{grid-template-columns:repeat(2,minmax(0,1fr))}
   .article .lnk-grid.sm{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -265,6 +276,67 @@ footer{max-width:900px;margin:0 auto;padding:0 20px 26px;font-size:12px;color:va
       g.items[0].h.parentNode.insertBefore(grid, g.items[0].h);
       g.items.forEach(function(it){ wrapCard(it, size, grid); });
     });
+    decorateBlocks(c);
+  }
+
+  // 文本框复制按钮 + 视频封面/大屏播放按钮（仅前端渲染层，不写入存储内容）
+  function decorateBlocks(content){
+    Array.prototype.forEach.call(content.querySelectorAll('pre'), function(pre){
+      if (pre.querySelector('.pre-copy')) return;
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'pre-copy';
+      btn.textContent = '复制';
+      btn.onclick = function(){
+        var clone = pre.cloneNode(true);
+        var b = clone.querySelector('.pre-copy');
+        if (b) b.parentNode.removeChild(b);
+        var text = clone.textContent.replace(/\n+$/g, '');
+        if (!text) return;
+        copyText(text, btn);
+      };
+      pre.appendChild(btn);
+    });
+    Array.prototype.forEach.call(content.querySelectorAll('video'), function(v){
+      if (v.getAttribute('data-poster') && !v.getAttribute('poster')) v.setAttribute('poster', v.getAttribute('data-poster'));
+      v.setAttribute('playsinline', 'true');
+      var src = v.getAttribute('src')
+        || (v.querySelector('source') ? v.querySelector('source').getAttribute('src') : '')
+        || '';
+      // wangEditor 会把 video 包在 <div data-w-e-type="video"> 里，wrapper 要挂到该 div 外层
+      var slot = (v.parentNode && v.parentNode.getAttribute && v.parentNode.getAttribute('data-w-e-type') === 'video')
+        ? v.parentNode : v;
+      if (slot.parentNode && slot.parentNode.classList && slot.parentNode.classList.contains('vdo-wrap')) return;
+      var wrap = document.createElement('div');
+      wrap.className = 'vdo-wrap';
+      var bigBtn = document.createElement('a');
+      bigBtn.className = 'vdo-big';
+      bigBtn.href = src || '#';
+      bigBtn.target = '_blank';
+      bigBtn.rel = 'noopener';
+      bigBtn.textContent = '大屏播放 ↗';
+      bigBtn.onclick = function(ev){ ev.stopPropagation(); };
+      wrap.onclick = function(ev){
+        if (ev.target === bigBtn) return;
+        if (v.paused){ try { v.play(); } catch(e){} }
+      };
+      slot.parentNode.insertBefore(wrap, slot);
+      wrap.appendChild(slot);
+      wrap.appendChild(bigBtn);
+    });
+  }
+  function copyText(text, btn){
+    var done = function(){ if (btn){ var old = btn.textContent; btn.textContent = '已复制'; setTimeout(function(){ btn.textContent = old; }, 1500); } };
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(done).catch(function(){ fallbackCopy(text, done); });
+    } else { fallbackCopy(text, done); }
+  }
+  function fallbackCopy(text, done){
+    var ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); done(); } catch(e){}
+    document.body.removeChild(ta);
   }
 
   var params = new URLSearchParams(location.search);

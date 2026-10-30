@@ -148,6 +148,14 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
 #card-menu a.disabled{opacity:.35;pointer-events:none}
 /* 卡片被选中（右键 / 单击卡片空白处）时的提示 */
 #editor-container .lnk-card.ctx-active{outline:2px solid rgba(14,138,168,.5);outline-offset:2px}
+/* ---- 插入文本框（代码块外观，保留粘贴的换行/缩进）---- */
+#editor-container pre{position:relative;margin:12px 0;padding:18px 18px 18px 20px;border:1px solid #e3e8ee;border-radius:10px;background:#f7f9fb;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;line-height:1.65;color:#2b3440;overflow:auto;max-height:420px;white-space:pre-wrap;word-break:break-word}
+#editor-container pre code{font-family:inherit;font-size:inherit;background:transparent;padding:0;white-space:pre-wrap}
+/* ---- 插入视频（封面 + 点击播放）---- */
+#editor-container video{display:block;width:100%;max-width:640px;margin:12px 0;border-radius:10px;background:#000}
+/* 编辑区悬浮"复制"按钮（文本框右上角）*/
+#pre-copy{position:fixed;display:none;z-index:9998;padding:5px 10px;border:1px solid #dbe4ec;border-radius:6px;background:#fff;color:#2c3e50;font-size:12px;cursor:pointer;box-shadow:0 2px 8px rgba(16,42,67,.12)}
+#pre-copy:hover{background:#eef6f9;color:var(--brand2)}
 </style>
 </head>
 <body>
@@ -198,6 +206,9 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
   <a data-op="del" class="danger">删除</a>
 </div>
 
+<!-- 文本框右上角悬浮复制按钮 -->
+<button id="pre-copy" type="button">复制</button>
+
 <script src="https://cdn.jsdelivr.net/npm/@wangeditor/editor@5.1.23/dist/index.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.js"></script>
 <script>
@@ -213,7 +224,9 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     net: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14 0 18M12 3c-3 3.5-3 14 0 18"/></svg>',
     card: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 10h18M7 15h4"/></svg>',
     face: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5s1.5 2 3.5 2 3.5-2 3.5-2M9 9.5h.01M15 9.5h.01"/></svg>',
-    dl: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v12M6 9l6 6 6-6"/><path d="M4 19h16"/></svg>'
+    dl: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v12M6 9l6 6 6-6"/><path d="M4 19h16"/></svg>',
+    textbox: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M7 9h10M7 13h7M7 17h4"/></svg>',
+    video: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M10 9.5l5 2.5-5 2.5z"/></svg>'
   };
 
   var allNodes = [];
@@ -397,6 +410,43 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       if (st.action) a.setAttribute('data-action', st.action);
       if (st.effects && st.effects.length) a.setAttribute('data-effect', st.effects.join(' '));
     });
+  }
+  /* ============ 视频块状态（src / poster）============
+     wangEditor 的 video 节点往返会丢掉 poster，所以和卡片一样用页面级数组存真源：
+     保存时按文档顺序把 poster 写回 <video data-poster>，加载时读走并剥离。 */
+  var pageVideos = [];
+  function eachVideo(html, cb){
+    var div = document.createElement('div');
+    div.innerHTML = html || '';
+    Array.prototype.forEach.call(div.querySelectorAll('video'), cb);
+    return div.innerHTML;
+  }
+  function extractVideoState(html){
+    var state = [];
+    var clean = eachVideo(html, function(v){
+      state.push({ src: v.getAttribute('src') || '', poster: v.getAttribute('data-poster') || v.getAttribute('poster') || '' });
+      v.removeAttribute('data-poster');
+    });
+    return { html: clean, state: state };
+  }
+  function injectVideoState(html, state){
+    return eachVideo(html, function(v, n){
+      var st = state[n];
+      if (!st) return;
+      if (st.poster) v.setAttribute('data-poster', st.poster);
+      else v.removeAttribute('data-poster');
+    });
+  }
+  // 保存时以编辑区 DOM 里的 video 为准回收封面（增删视频后顺序可能变）
+  function videosFromDom(){
+    var box = document.querySelector('#editor-container [contenteditable="true"]')
+           || document.querySelector('#editor-container [data-slate-editor]');
+    if (!box) return null;
+    var out = [];
+    Array.prototype.forEach.call(box.querySelectorAll('video'), function(v){
+      out.push({ src: v.getAttribute('src') || '', poster: v.getAttribute('poster') || '' });
+    });
+    return out;
   }
   // 从编辑区已 cardify 的卡片 wrapper 上回收状态（卡片增删后索引会变，DOM 才是最终真相）
   function collectCardStateFromDom(){
@@ -623,10 +673,12 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       pa.classList.remove('show');
       ea.classList.add('show');
       if (!editor) initEditor();
-      // 先从存储内容里提取卡片状态（动作/特效），再加载剥离后的 HTML
+      // 先从存储内容里提取卡片状态（动作/特效）与视频封面，再加载剥离后的 HTML
       var ex = extractCardState(n.content || '');
       pageCards = ex.state;
-      setHtmlSafe(editor, sanitizeContent(ex.html) || '<p><br></p>');
+      var exV = extractVideoState(ex.html);
+      pageVideos = exV.state;
+      setHtmlSafe(editor, sanitizeContent(exV.html) || '<p><br></p>');
       // setHtmlSafe 会触发 onChange → 300ms 后 cardify，但我们立即也执行一次让卡片立即可见
       setTimeout(function(){ cardifyEditor(); }, 50);
     } else {
@@ -1323,11 +1375,65 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       try { ed.insertText(value + ' '); } catch(e){ toast('插入失败: ' + e.message); }
     };
 
+    /* 自定义菜单：插入文本框（代码块外观，可粘贴内容并保留换行/缩进，右上角可复制） */
+    function TextBoxMenu(){
+      this.title = '插入文本框';
+      this.tag = 'button';
+      this.iconSvg = ICON.textbox;
+    }
+    TextBoxMenu.prototype.getValue = function(){ return ''; };
+    TextBoxMenu.prototype.isActive = function(){ return false; };
+    TextBoxMenu.prototype.isDisabled = function(){ return false; };
+    TextBoxMenu.prototype.exec = function(ed){
+      try {
+        insertBlockAtCursor('<pre><code><br></code></pre>');
+        toast('已插入文本框，可直接粘贴内容（保留换行与缩进）');
+      } catch(e){ toast('插入失败: ' + e.message); }
+    };
+
+    /* 自定义菜单：插入视频（网页显示封面，点击播放，可打开新标签页全屏） */
+    function VideoMenu(){
+      this.title = '插入视频';
+      this.tag = 'button';
+      this.iconSvg = ICON.video;
+    }
+    VideoMenu.prototype.getValue = function(){ return ''; };
+    VideoMenu.prototype.isActive = function(){ return false; };
+    VideoMenu.prototype.isDisabled = function(){ return false; };
+    VideoMenu.prototype.exec = function(ed){
+      // 弹窗输入期间编辑器会失焦，先备份选区，确定后恢复，插入才会落在原光标处
+      var savedSel = null;
+      try { savedSel = ed.selection ? JSON.parse(JSON.stringify(ed.selection)) : null; } catch(e){}
+      openModal(
+        '<h3>插入视频</h3>'
+        + '<div class="mrow"><label>视频地址（mp4/webm）</label><input type="text" id="vdo-src" placeholder="https://.../movie.mp4"></div>'
+        + '<div class="mrow"><label>封面图片地址（可留空）</label><input type="text" id="vdo-poster" placeholder="https://.../cover.jpg"></div>'
+        + '<div class="mrow note">插入后网页中显示封面，点击封面即可播放，右上角可打开新标签页大屏播放</div>'
+        + '<div class="mbtn-row"><button class="mbtn mbtn-cancel" id="vdo-cancel">取消</button><button class="mbtn mbtn-ok" id="vdo-ok">确定</button></div>'
+      );
+      document.getElementById('vdo-cancel').onclick = closeModal;
+      document.getElementById('vdo-ok').onclick = function(){
+        var src = document.getElementById('vdo-src').value.trim();
+        var poster = document.getElementById('vdo-poster').value.trim();
+        if (!src){ toast('请输入视频地址'); return; }
+        closeModal();
+        try { if (savedSel) ed.selection = savedSel; } catch(e){}
+        try {
+          insertBlockAtCursor('<video src="' + esc(src) + '"' + (poster ? ' poster="' + esc(poster) + '"' : '')
+            + ' controls preload="metadata"></video>');
+          pageVideos.push({ src: src, poster: poster });
+          toast('已插入视频');
+        } catch(e){ toast('插入失败: ' + e.message); }
+      };
+    };
+
     // 注册自定义菜单（必须在 createToolbar 之前）
     E.Boot.registerMenu({ key: 'menuLink', factory: function(){ return new LinkMenu(); } });
     E.Boot.registerMenu({ key: 'menuCard', factory: function(){ return new CardMenu(); } });
     E.Boot.registerMenu({ key: 'menuIcon', factory: function(){ return new IconMenu(); } });
     E.Boot.registerMenu({ key: 'menuNetImg', factory: function(){ return new NetImgMenu(); } });
+    E.Boot.registerMenu({ key: 'menuText', factory: function(){ return new TextBoxMenu(); } });
+    E.Boot.registerMenu({ key: 'menuVideo', factory: function(){ return new VideoMenu(); } });
 
     editor = E.createEditor({
       selector: '#editor-container',
@@ -1366,6 +1472,8 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
           'divider',
           'menuLink',
           'menuCard',
+          'menuText',
+          'menuVideo',
           'menuIcon',
           'uploadImage', 'menuNetImg',
           'clearStyle',
@@ -1453,8 +1561,18 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
         g.items[0].h.parentNode.insertBefore(grid, g.items[0].h);
         g.items.forEach(function(it){ wrapCard(it, size, grid); });
       });
+      decorateBlocks();
       isCardifying = false;
     };
+    // 编辑器重渲染会丢掉 video 的 poster，按文档顺序从 pageVideos 真源补回封面
+    function decorateBlocks(){
+      var el = getEditableBox();
+      if (!el) return;
+      Array.prototype.forEach.call(el.querySelectorAll('video'), function(v, i){
+        var st = pageVideos[i];
+        if (st && st.poster && !v.getAttribute('poster')) v.setAttribute('poster', st.poster);
+      });
+    }
 
     /* ============ 链接框卡片：光标处插入 / 移动 / 右键菜单 ============ */
     var CARD_MARK = '\u2063cmk\u2063';
@@ -1603,6 +1721,44 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       applyHtmlThen(root.innerHTML, newIdx);
       return newIdx;
     }
+    // 通用：把一段 HTML 块插入到光标所在块之后（文本框 / 视频用）
+    function insertBlockAtCursor(blockHtml){
+      var el = getEditableBox();
+      if (!el) return false;
+      var root = document.createElement('div');
+      var anchor = null;
+      try {
+        editor.insertText(CARD_MARK);
+        root.innerHTML = editor.getHtml();
+        var blk = blockOfMark(root, CARD_MARK);
+        if (blk){ stripMarkText(root, CARD_MARK); anchor = blk; }
+        else root.innerHTML = editor.getHtml();
+      } catch(e0){ root.innerHTML = editor.getHtml(); }
+      if (!anchor){
+        var anchorEl = blockAtSelection();
+        if (anchorEl){
+          var kids = Array.prototype.slice.call(el.children);
+          var pos = kids.indexOf(anchorEl);
+          if (pos >= 0 && pos < root.children.length){
+            var cand = root.children[pos];
+            if (cand.tagName === anchorEl.tagName
+              && (cand.textContent || '').trim().slice(0, 12) === (anchorEl.textContent || '').trim().slice(0, 12)) anchor = cand;
+          }
+        }
+      }
+      if (anchor){
+        var pre = cardsInHtml(root);
+        for (var i = 0; i < pre.length; i++){
+          if (pre[i].h === anchor || pre[i].p1 === anchor || pre[i].p2 === anchor){ anchor = pre[i].p2; break; }
+        }
+        if (!anchor.textContent.trim() && !anchor.querySelector('img,video,table,hr,pre')) anchor.innerHTML = '<br>';
+        anchor.insertAdjacentHTML('afterend', blockHtml);
+      } else {
+        root.insertAdjacentHTML('beforeend', blockHtml);
+      }
+      applyHtmlThen(root.innerHTML, -1);
+      return true;
+    }
     function rebuildCards(html, selIdx){ applyHtmlThen(html, selIdx); }
     function titlesOf(rootEl, sel){
       if (!rootEl) return '';
@@ -1717,8 +1873,22 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       };
       return true;
     }
+    // 卡片剪贴板为空时：尝试读取系统剪贴板（用户想"粘贴文档"的场景）
+    function pasteSystemClipboard(){
+      if (!navigator.clipboard || !navigator.clipboard.readText){
+        toast('请用 Ctrl+V 粘贴内容'); return;
+      }
+      navigator.clipboard.readText().then(function(txt){
+        if (!txt){ toast('剪贴板为空，请先复制文档内容'); return; }
+        var html = txt.split(/\r?\n/).map(function(line){
+          return '<p>' + (line.trim() ? esc(line) : '<br>') + '</p>';
+        }).join('');
+        insertBlockAtCursor(html);
+        toast('已粘贴内容');
+      }).catch(function(){ toast('无法读取剪贴板，请用 Ctrl+V 粘贴'); });
+    }
     function pasteCardAtCursor(targetCardEl){
-      if (!cardClipboard){ toast('剪贴板为空，请先复制或剪切一张卡片'); return; }
+      if (!cardClipboard){ pasteSystemClipboard(); return; }
       var meta = { action: cardClipboard.action, effects: cardClipboard.effects };
       // 右键点在某张卡片上时，直接贴到该卡片后面（不依赖编辑器光标——右键菜单操作后光标常丢失）
       if (targetCardEl && targetCardEl.isConnected){
@@ -1765,9 +1935,13 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       el.__cardOpsBound = true;
       el.addEventListener('contextmenu', function(ev){
         var w = ev.target.closest ? ev.target.closest('.lnk-card') : null;
-        ev.preventDefault();
         markActiveCard(w);
-        showCardMenu(ev.clientX, ev.clientY, w);
+        // 只有右键点中卡片（或剪贴板里有已复制的卡片）时才接管菜单；
+        // 其余情况放行浏览器原生菜单，保证"粘贴文档"等原生操作可用
+        if (w || cardClipboard){
+          ev.preventDefault();
+          showCardMenu(ev.clientX, ev.clientY, w);
+        }
       });
       el.addEventListener('click', function(ev){
         var w = ev.target.closest ? ev.target.closest('.lnk-card') : null;
@@ -1789,6 +1963,42 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
         else if (op === 'cut'){ if (copyCardToClipboard(w)){ deleteCardByDom(w); toast('已剪切卡片，在目标卡片上右键→粘贴'); } }
         else if (op === 'edit'){ var h = w.querySelector('h2,h3,h5'); if (h) openCardEditor(editor, h); }
         else if (op === 'del'){ deleteCardByDom(w); toast('已删除卡片'); }
+      });
+    })();
+    /* 文本框（pre 代码块）右上角悬浮"复制"按钮：不进入 contenteditable，避免污染保存内容 */
+    (function bindPreCopy(){
+      var el = getEditableBox();
+      var btn = document.getElementById('pre-copy');
+      if (!el || !btn || el.__preCopyBound) return;
+      el.__preCopyBound = true;
+      var curPre = null, hideTimer = null;
+      function hideSoon(){ clearTimeout(hideTimer); hideTimer = setTimeout(function(){ btn.style.display = 'none'; }, 220); }
+      function showBtn(pre){
+        var r = pre.getBoundingClientRect();
+        btn.style.left = Math.max(8, r.right - 64) + 'px';
+        btn.style.top = (r.top + 8) + 'px';
+        btn.style.display = 'block';
+      }
+      el.addEventListener('mousemove', function(ev){
+        var pre = ev.target.closest ? ev.target.closest('pre') : null;
+        curPre = pre;
+        if (pre){ clearTimeout(hideTimer); showBtn(pre); }
+        else hideSoon();
+      });
+      el.addEventListener('scroll', function(){ if (curPre) showBtn(curPre); else btn.style.display = 'none'; });
+      el.addEventListener('mouseleave', hideSoon);
+      btn.addEventListener('mouseenter', function(){ clearTimeout(hideTimer); });
+      btn.addEventListener('mouseleave', hideSoon);
+      btn.addEventListener('mousedown', function(ev){ ev.preventDefault(); ev.stopPropagation(); });
+      btn.addEventListener('click', function(ev){
+        ev.preventDefault(); ev.stopPropagation();
+        if (!curPre) return;
+        var text = curPre.textContent.replace(/\n+$/g, '');
+        if (!text){ toast('文本框内容为空'); return; }
+        if (navigator.clipboard && navigator.clipboard.writeText){
+          navigator.clipboard.writeText(text).then(function(){ toast('已复制文本框内容'); })
+            .catch(function(){ toast('复制失败，请手动选中复制'); });
+        } else { toast('当前浏览器不支持自动复制'); }
       });
     })();
     var cardifyTimer = null;
@@ -1834,7 +2044,10 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     if (!title){ toast('请先填写标题'); return; }
     if (!currentId){ toast('请先选择或新建内容'); return; }
     var body = { title: title, hidden: document.getElementById('chk-hidden').checked };
-    if (currentType === 'page') body.content = injectCardState(sanitizeContent(editor.getHtml()), currentCardState());
+    if (currentType === 'page'){
+      var html = injectCardState(sanitizeContent(editor.getHtml()), currentCardState());
+      body.content = injectVideoState(html, videosFromDom() || pageVideos);
+    }
     fetch('/api/nodes/' + currentId, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
