@@ -615,9 +615,9 @@ func main() {
 
 	// ---------- 文件上传（图片 + 附件）----------
 	mux.HandleFunc("POST /api/upload", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, 200<<20)
-		if err := r.ParseMultipartForm(200 << 20); err != nil {
-			writeJSON(w, 400, map[string]string{"error": "文件太大或格式错误（最大 200MB）"})
+		// 不限制总上传大小；32MB 仅为内存阈值，超出部分自动写入临时磁盘文件
+		if err := r.ParseMultipartForm(32 << 20); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "请求格式错误：" + err.Error()})
 			return
 		}
 		file, header, err := r.FormFile("file")

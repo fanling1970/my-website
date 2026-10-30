@@ -89,6 +89,17 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
 .mbtn-ok:hover{background:#0b7a95}
 .mbtn-cancel{background:#e4e9ee;color:var(--ink2)}
 .mbtn-cancel:hover{background:#d3dbe3}
+.up-list{max-height:50vh;overflow:auto;margin-bottom:12px}
+.up-row{padding:8px 0;border-bottom:1px dashed #e8eef4}
+.up-row:last-child{border-bottom:none}
+.up-name{font-size:13px;color:var(--ink2);margin-bottom:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.up-bar{height:8px;border-radius:4px;background:#e8eef4;overflow:hidden}
+.up-fill{height:100%;width:0;border-radius:4px;background:var(--brand2);transition:width .15s}
+.up-fill.done{background:#27ae60}
+.up-fill.err{background:#e74c3c}
+.up-st{font-size:12px;color:var(--ink3);margin-top:4px}
+.up-st.err{color:#e74c3c}
+.up-foot{font-size:14px;font-weight:600;padding-top:4px;min-height:20px}
 .crop-box{max-height:55vh;overflow:hidden;text-align:center}
 .crop-box img{max-width:100%;display:block;margin:0 auto}
 @media (max-width:700px){
@@ -2180,51 +2191,94 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     input.multiple = true;
     input.onchange = function(){
       if (!input.files || !input.files.length) return;
-      var files = Array.prototype.slice.call(input.files);
-      var ok = 0, fail = 0;
-      // 串行上传：避免多个大文件并发占满带宽/内存导致请求中断
-      (function next(i){
-        if (i >= files.length){
-          loadAll();
-          if (fail) toast('上传完成：成功 ' + ok + ' 个，失败 ' + fail + ' 个');
-          else toast(files.length > 1 ? ('已上传 ' + ok + ' 个附件') : '附件已上传');
-          return;
-        }
-        var f = files[i];
-        toast('上传中 ' + (i + 1) + '/' + files.length + '：' + f.name + '（' + Math.round(f.size / 1048576) + 'MB）');
-        var fd = new FormData();
-        fd.append('file', f);
-        fetch('/api/upload', { method: 'POST', body: fd })
-          .then(function(r){
-            return r.json().catch(function(){ return { error: '服务器返回 HTTP ' + r.status }; });
-          })
-          .then(function(res){
-            if (!res || res.errno !== 0){
-              fail++;
-              toast('「' + f.name + '」上传失败' + (res && res.error ? '：' + res.error : ''));
-              return null;
-            }
-            return fetch('/api/nodes', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                type: 'file',
-                parent: currentParent(),
-                title: res.data.name,
-                content: res.data.url,
-                fileName: res.data.name,
-                size: res.data.size
-              })
-            }).then(function(r2){ return r2.json(); }).then(function(n){
-              if (!n || n.error){ fail++; toast('「' + f.name + '」登记失败'); }
-              else { ok++; }
-            });
-          })
-          .catch(function(e){ fail++; toast('「' + f.name + '」上传出错：' + e.message); })
-          .then(function(){ next(i + 1); });
-      })(0);
+      uploadFilesWithProgress(Array.prototype.slice.call(input.files));
     };
     input.click();
+  }
+
+  // 上传进度弹窗：每个文件一行进度条（XHR 获取真实上传进度），全部完成后明确提示
+  function uploadFilesWithProgress(files){
+    var rows = '';
+    files.forEach(function(f, i){
+      rows += '<div class="up-row"><div class="up-name" title="' + esc(f.name) + '">' + esc(f.name) +
+        ' <span style="color:var(--ink3)">（' + fmtSize(f.size) + '）</span></div>' +
+        '<div class="up-bar"><div class="up-fill" id="up-fill-' + i + '"></div></div>' +
+        '<div class="up-st" id="up-st-' + i + '">等待上传</div></div>';
+    });
+    openModal('<h3>上传附件（共 ' + files.length + ' 个）</h3><div class="up-list">' + rows + '</div>' +
+      '<div class="up-foot" id="up-foot"></div>' +
+      '<div class="mbtn-row"><button class="mbtn mbtn-cancel" id="up-close" style="display:none">关闭</button></div>');
+
+    var ok = 0, fail = 0;
+    // 串行上传：避免多个大文件并发占满带宽/内存导致请求中断
+    (function next(i){
+      if (i >= files.length){
+        loadAll();
+        var foot = document.getElementById('up-foot');
+        if (foot){
+          foot.innerHTML = fail
+            ? '<span style="color:#e74c3c">上传完成：成功 ' + ok + ' 个，失败 ' + fail + ' 个</span>'
+            : '<span style="color:#27ae60">✓ 上传成功（共 ' + ok + ' 个）</span>';
+        }
+        var closeBtn = document.getElementById('up-close');
+        if (closeBtn){
+          closeBtn.style.display = '';
+          closeBtn.onclick = closeModal;
+        }
+        return;
+      }
+      var f = files[i];
+      var fill = document.getElementById('up-fill-' + i);
+      var st = document.getElementById('up-st-' + i);
+      var setErr = function(msg){
+        fail++;
+        if (fill) fill.className = 'up-fill err';
+        if (st){ st.className = 'up-st err'; st.textContent = '✗ ' + msg; }
+        next(i + 1);
+      };
+      if (st) st.textContent = '上传中… 0%';
+      var fd = new FormData();
+      fd.append('file', f);
+      var xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/upload');
+      xhr.upload.onprogress = function(e){
+        if (!e.lengthComputable) return;
+        var p = Math.min(100, Math.round(e.loaded / e.total * 100));
+        if (fill) fill.style.width = p + '%';
+        if (st) st.textContent = '上传中… ' + p + '%（' + fmtSize(e.loaded) + ' / ' + fmtSize(e.total) + '）';
+      };
+      xhr.onload = function(){
+        var res;
+        try { res = JSON.parse(xhr.responseText); } catch(e){ res = null; }
+        if (!res || res.errno !== 0){
+          setErr('上传失败' + (res && res.error ? '：' + res.error : '（HTTP ' + xhr.status + '）'));
+          return;
+        }
+        if (fill) fill.style.width = '100%';
+        if (st) st.textContent = '登记中…';
+        fetch('/api/nodes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'file',
+            parent: currentParent(),
+            title: res.data.name,
+            content: res.data.url,
+            fileName: res.data.name,
+            size: res.data.size
+          })
+        }).then(function(r2){ return r2.json(); }).then(function(n){
+          if (!n || n.error){ setErr('登记失败' + (n && n.error ? '：' + n.error : '')); return; }
+          ok++;
+          if (fill) fill.className = 'up-fill done';
+          if (st) st.textContent = '✓ 上传成功';
+          next(i + 1);
+        }).catch(function(e){ setErr('登记出错：' + e.message); });
+      };
+      xhr.onerror = function(){ setErr('网络错误，上传中断'); };
+      xhr.ontimeout = function(){ setErr('上传超时'); };
+      xhr.send(fd);
+    })(0);
   }
 
   document.getElementById('btn-new').onclick = function(){ createNode('page'); };

@@ -88,7 +88,9 @@ main{max-width:1200px;margin:0 auto;padding:24px 20px 40px}
 .article .vdo-wrap iframe{display:block;width:100%;aspect-ratio:16/9;border:0;border-radius:10px;background:#000}
 .article .audio-box{margin:16px 0;padding:8px 14px;border:1px solid #e3eaf1;border-radius:10px;background:#fafcfd}
 .article .audio-box-title{font-size:13px;color:#7a8a99;padding:2px 0 6px}
-.article .audio-row{display:flex;align-items:center;gap:10px;padding:7px 0}
+.article .audio-row{display:flex;align-items:center;gap:10px;padding:7px 0;flex-wrap:wrap}
+.article .audio-err{flex:1 0 100%;font-size:12px;color:#c0392b}
+.article .audio-err a{color:#c0392b;text-decoration:underline}
 .article .audio-row + .audio-row{border-top:1px dashed #e8eef4}
 .article .audio-name{flex:0 1 40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;color:#2c3e50}
 .article .audio-row audio{flex:1 1 auto;min-width:0;height:34px}
@@ -372,8 +374,22 @@ footer{max-width:900px;margin:0 auto;padding:0 20px 26px;font-size:12px;color:va
       nm.title = name;
       var au = document.createElement('audio');
       au.setAttribute('controls', 'controls');
-      au.setAttribute('preload', 'none');
+      au.setAttribute('preload', 'metadata');
       au.src = href;
+      // 加载失败可见化：显示原因提示并提供直接打开/下载链接
+      au.addEventListener('error', function(){
+        if (row.querySelector('.audio-err')) return;
+        var tip = document.createElement('div');
+        tip.className = 'audio-err';
+        var a2 = document.createElement('a');
+        a2.href = href;
+        a2.target = '_blank';
+        a2.textContent = '尝试直接打开';
+        tip.appendChild(document.createTextNode('⚠ 音频加载失败，请检查网络或文件是否存在（'));
+        tip.appendChild(a2);
+        tip.appendChild(document.createTextNode('）'));
+        row.appendChild(tip);
+      });
       row.appendChild(nm);
       row.appendChild(au);
       var prev = p.previousElementSibling;
