@@ -1472,7 +1472,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
         + '<div class="mrow"><label>本地视频（从已上传附件中选择，自动填充地址）</label><select id="vdo-local"><option value="">— 不选，手动填地址 —</option>' + vopts + '</select></div>'
         + '<div class="mrow"><label>视频地址（mp4/webm 直链，或 B 站视频页地址）</label><input type="text" id="vdo-src" placeholder="https://.../movie.mp4 或 https://www.bilibili.com/video/BV..."></div>'
         + '<div class="mrow"><label>封面图片地址（可留空，B站视频不用填）</label><input type="text" id="vdo-poster" placeholder="https://.../cover.jpg"></div>'
-        + '<div class="mrow"><label>自动生成封面（可选，选本地视频文件抓首帧）</label><input type="file" id="vdo-cover-file" accept="video/*"></div>'
+        + '<div class="mrow"><button type="button" class="mbtn" id="vdo-cover-btn">自动生成封面（抓所选视频首帧）</button><span id="vdo-cover-st" class="note"></span></div>'
         + '<div class="mrow note">本地视频：先在左侧「上传附件」传视频（可放到 videos 文件夹）；B站视频：直接粘贴视频页地址，自动转为嵌入播放器</div>'
         + '<div class="mbtn-row"><button class="mbtn mbtn-cancel" id="vdo-cancel">取消</button><button class="mbtn mbtn-ok" id="vdo-ok">确定</button></div>'
       );
@@ -1481,42 +1481,60 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       });
       document.getElementById('vdo-local').onchange = function(){
         if (this.value) document.getElementById('vdo-src').value = this.value;
+        if (this.value && !document.getElementById('vdo-poster').value.trim()) runCoverGen();
       };
-      // 本地视频文件 → blob → canvas 抓首帧 → 封面(data URL)，只读本地文件，不发网络请求
-      document.getElementById('vdo-cover-file').onchange = function(){
-        var f = this.files && this.files[0];
-        if (!f) return;
-        var posterInput = document.getElementById('vdo-poster');
-        var blobUrl = URL.createObjectURL(f);
-        var tmp = document.createElement('video');
-        var finished = false;
-        function cleanup(){ try { URL.revokeObjectURL(blobUrl); } catch(e){} }
-        function grab(){
-          if (finished) return;
-          finished = true;
-          try {
-            var w = tmp.videoWidth || 0, h = tmp.videoHeight || 0;
-            if (!w || !h) throw new Error('未取到画面');
-            var scale = Math.min(1, 720 / w);
-            var c = document.createElement('canvas');
-            c.width = Math.round(w * scale);
-            c.height = Math.round(h * scale);
-            c.getContext('2d').drawImage(tmp, 0, 0, c.width, c.height);
-            posterInput.value = c.toDataURL('image/jpeg', 0.7);
-            toast('已生成封面 ' + c.width + '×' + c.height);
-          } catch(e){ toast('封面生成失败：' + e.message); }
-          cleanup();
-        }
-        tmp.preload = 'metadata';
-        tmp.muted = true;
-        tmp.src = blobUrl;
-        tmp.onloadeddata = function(){
-          try { tmp.currentTime = Math.min(0.5, (tmp.duration || 1) / 3); } catch(e){ grab(); }
-        };
-        tmp.onseeked = grab;
-        tmp.onerror = function(){ toast('无法读取该视频文件，请换一个文件'); cleanup(); };
-        setTimeout(function(){ if (!finished){ grab(); } }, 5000);
-      };
+      // 从"本地视频/视频地址"抓首帧生成封面（fetch 读入内存，不出现在下载列表）
+      function genVideoCover(src, done){
+        fetch(src).then(function(r){
+          if (!r.ok) throw new Error('下载视频失败（HTTP ' + r.status + '）');
+          return r.blob();
+        }).then(function(blob){
+          var blobUrl = URL.createObjectURL(blob);
+          var tmp = document.createElement('video');
+          var finished = false;
+          function cleanup(){ try { URL.revokeObjectURL(blobUrl); } catch(e){} }
+          function grab(){
+            if (finished) return;
+            finished = true;
+            try {
+              var w = tmp.videoWidth || 0, h = tmp.videoHeight || 0;
+              if (!w || !h) throw new Error('未取到画面');
+              var scale = Math.min(1, 720 / w);
+              var c = document.createElement('canvas');
+              c.width = Math.round(w * scale);
+              c.height = Math.round(h * scale);
+              c.getContext('2d').drawImage(tmp, 0, 0, c.width, c.height);
+              done(null, c.toDataURL('image/jpeg', 0.7), c.width + '×' + c.height);
+            } catch(e){ done(e); }
+            cleanup();
+          }
+          tmp.preload = 'metadata';
+          tmp.muted = true;
+          tmp.src = blobUrl;
+          tmp.onloadeddata = function(){
+            try { tmp.currentTime = Math.min(0.5, (tmp.duration || 1) / 3); } catch(e){ grab(); }
+          };
+          tmp.onseeked = grab;
+          tmp.onerror = function(){ done(new Error('视频无法解码')); cleanup(); };
+          setTimeout(grab, 8000);
+        }).catch(done);
+      }
+      var coverBusy = false;
+      function runCoverGen(){
+        if (coverBusy) return;
+        var src = document.getElementById('vdo-src').value.trim();
+        var stEl = document.getElementById('vdo-cover-st');
+        if (!src || /bilibili\.com\/video/i.test(src)){ stEl.textContent = '请先选择本地视频（或填 mp4 直链）'; return; }
+        coverBusy = true;
+        stEl.textContent = '正在生成封面…（大视频需先读入，稍等）';
+        genVideoCover(src, function(err, dataUrl, size){
+          coverBusy = false;
+          if (err){ stEl.textContent = '封面生成失败：' + err.message + '（可手动填封面图地址）'; return; }
+          document.getElementById('vdo-poster').value = dataUrl;
+          stEl.textContent = '已生成封面 ' + size;
+        });
+      }
+      document.getElementById('vdo-cover-btn').onclick = runCoverGen;
       document.getElementById('vdo-cancel').onclick = closeModal;
       document.getElementById('vdo-ok').onclick = function(){
         var src = document.getElementById('vdo-src').value.trim();
