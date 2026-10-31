@@ -402,9 +402,12 @@ footer{max-width:900px;margin:0 auto;padding:0 20px 26px;font-size:12px;color:va
     box.appendChild(list);
     box.appendChild(bar);
 
-    var audio = new Audio();
-    audio.preload = 'none';
+    var audio = document.createElement('audio');
+    audio.preload = 'auto';
     audio.volume = 0.8;
+    audio.setAttribute('playsinline', '');
+    audio.style.display = 'none';
+    box.appendChild(audio);
 
     var nowEl = bar.querySelector('.mp-now');
     var timeEl = bar.querySelector('.mp-time');
@@ -434,14 +437,49 @@ footer{max-width:900px;margin:0 auto;padding:0 20px 26px;font-size:12px;color:va
       fillEl.style.width = pct + '%';
       dotEl.style.left = pct + '%';
     }
+    var wdTimer = null;
+    function playFail(msg){
+      nowEl.textContent = '播放失败：' + msg + '（可点行尾「打开链接」用本地播放器打开）';
+      toggEl.innerHTML = MP_ICON.play;
+      toggEl.title = '播放';
+    }
+    function tryPlay(){
+      var p = null;
+      try { p = audio.play(); } catch (e) { playFail((e && e.name) || '播放异常'); return; }
+      if (p && p.catch) p.catch(function(err){
+        var n = (err && err.name) || '';
+        if (n === 'NotAllowedError') playFail('浏览器拦截了播放，请再点一次播放按钮');
+        else if (n === 'NotSupportedError') playFail('当前浏览器不支持该音频格式');
+        else playFail(n || '未知原因');
+      });
+    }
+    function reloadPlay(){
+      audio.src = songs[st.idx].href;
+      try { audio.load(); } catch (e) {}
+      tryPlay();
+    }
+    function watchdog(){
+      clearTimeout(wdTimer);
+      if (st.idx < 0) return;
+      var tries = 0;
+      wdTimer = setTimeout(function tick(){
+        if (st.idx < 0 || audio.paused || audio.currentTime > 0) return;
+        if (tries < 2){
+          tries++;
+          reloadPlay();
+          wdTimer = setTimeout(tick, 3000);
+          return;
+        }
+        try { audio.pause(); } catch (e) {}
+        playFail(audio.error ? ('音频解码/加载出错，错误码 ' + audio.error.code) : '长时间无法开始播放');
+      }, 3000);
+    }
     function playIndex(i, queue){
       if (i == null || i < 0 || i >= songs.length) return;
       st.idx = i;
       st.queue = queue && queue.length ? queue.slice() : allIdx();
-      audio.preload = 'auto';
-      audio.src = songs[i].href;
-      var p = audio.play();
-      if (p && p.catch) p.catch(function(){});
+      reloadPlay();
+      watchdog();
       paint();
       syncTime();
     }
@@ -461,9 +499,17 @@ footer{max-width:900px;margin:0 auto;padding:0 20px 26px;font-size:12px;color:va
       toggEl.title = '暂停';
     });
     audio.addEventListener('pause', function(){
+      clearTimeout(wdTimer);
       toggEl.innerHTML = MP_ICON.play;
       toggEl.title = '播放';
     });
+    audio.addEventListener('error', function(){
+      if (st.idx >= 0) playFail('音频加载出错，错误码 ' + (audio.error ? audio.error.code : '?'));
+    });
+    audio.addEventListener('waiting', function(){
+      if (st.idx >= 0 && !audio.paused) timeEl.textContent = '缓冲中…';
+    });
+    audio.addEventListener('playing', syncTime);
     audio.addEventListener('timeupdate', syncTime);
     audio.addEventListener('loadedmetadata', syncTime);
     audio.addEventListener('ended', function(){
@@ -472,8 +518,7 @@ footer{max-width:900px;margin:0 auto;padding:0 20px 26px;font-size:12px;color:va
       var nxt = -1;
       if (st.mode === 3){
         audio.currentTime = 0;
-        var rp = audio.play();
-        if (rp && rp.catch) rp.catch(function(){});
+        tryPlay();
         return;
       }
       if (st.mode === 2 && q.length > 1){
@@ -495,7 +540,7 @@ footer{max-width:900px;margin:0 auto;padding:0 20px 26px;font-size:12px;color:va
         playIndex(q.length ? q[0] : 0, q.length ? q : allIdx());
         return;
       }
-      if (audio.paused){ var p = audio.play(); if (p && p.catch) p.catch(function(){}); }
+      if (audio.paused){ tryPlay(); watchdog(); }
       else audio.pause();
     };
     bar.querySelector('[data-act="prev"]').onclick = function(){ step(-1); };
