@@ -46,6 +46,7 @@ type Node struct {
 	FileName  string    `json:"fileName,omitempty"` // file: 原始文件名
 	Size      int64     `json:"size,omitempty"`    // file: 字节数
 	Hidden    bool      `json:"hidden,omitempty"`  // 仅登录可见（前台未登录时不显示/不可访问）
+	Order     int       `json:"order,omitempty"`   // 同级排序权重，越小越靠前（0 = 未手动调整过）
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
@@ -191,12 +192,83 @@ func (s *Store) Create(n Node) (Node, error) {
 	n.ID = newID()
 	n.CreatedAt = now
 	n.UpdatedAt = now
+	// 新节点排在同级末尾
+	maxOrder := 0
+	for _, x := range s.nodes {
+		if x.Parent == n.Parent && x.Order > maxOrder {
+			maxOrder = x.Order
+		}
+	}
+	n.Order = maxOrder + 10
 	s.nodes[n.ID] = n
 	if err := s.persistLocked(); err != nil {
 		delete(s.nodes, n.ID)
 		return Node{}, err
 	}
 	return n, nil
+}
+
+// siblingLess 同级节点排序：文件夹优先，再按 order 升序，最后按标题
+func siblingLess(a, b Node) bool {
+	af, bf := a.Type == TypeFolder, b.Type == TypeFolder
+	if af != bf {
+		return af
+	}
+	if a.Order != b.Order {
+		return a.Order < b.Order
+	}
+	if a.Title != b.Title {
+		return a.Title < b.Title
+	}
+	return a.CreatedAt.Before(b.CreatedAt)
+}
+
+// Move 在同级节点中上移/下移一位（首次调整时把同级权重规整为 10,20,30…，保持原有显示顺序）
+func (s *Store) Move(id string, up bool) (Node, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n, ok := s.nodes[id]
+	if !ok {
+		return Node{}, os.ErrNotExist
+	}
+	sibs := make([]Node, 0, len(s.nodes))
+	for _, x := range s.nodes {
+		if x.Parent == n.Parent {
+			sibs = append(sibs, x)
+		}
+	}
+	sort.Slice(sibs, func(i, j int) bool { return siblingLess(sibs[i], sibs[j]) })
+	idx := -1
+	for i := range sibs {
+		if sibs[i].ID == id {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return n, nil
+	}
+	target := idx - 1
+	if !up {
+		target = idx + 1
+	}
+	if target < 0 || target >= len(sibs) {
+		return n, nil // 已在最前/最后，无需移动
+	}
+	for i := range sibs {
+		x := s.nodes[sibs[i].ID]
+		x.Order = (i + 1) * 10
+		s.nodes[x.ID] = x
+	}
+	a := s.nodes[sibs[idx].ID]
+	b := s.nodes[sibs[target].ID]
+	a.Order, b.Order = b.Order, a.Order
+	s.nodes[a.ID] = a
+	s.nodes[b.ID] = b
+	if err := s.persistLocked(); err != nil {
+		return Node{}, err
+	}
+	return s.nodes[id], nil
 }
 
 // Update 更新节点。parent 为 nil 时保持原父节点（防止保存时误移位置）
@@ -611,6 +683,26 @@ func main() {
 			return
 		}
 		writeJSON(w, 200, map[string]any{"ok": true, "deleted": count})
+	}))
+	// 同级上移/下移（后台侧栏 ▲▼ 调整首页排列顺序）
+	mux.HandleFunc("POST /api/nodes/{id}/move", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Dir string `json:"dir"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "请求格式错误"})
+			return
+		}
+		if req.Dir != "up" && req.Dir != "down" {
+			writeJSON(w, 400, map[string]string{"error": "dir 必须是 up 或 down"})
+			return
+		}
+		n, err := store.Move(r.PathValue("id"), req.Dir == "up")
+		if err != nil {
+			writeJSON(w, 404, map[string]string{"error": "not found"})
+			return
+		}
+		writeJSON(w, 200, n)
 	}))
 
 	// ---------- 文件上传（图片 + 附件）----------

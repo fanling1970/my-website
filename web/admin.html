@@ -4,8 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>内容管理 - 秋风小站</title>
-<link href="https://cdn.jsdelivr.net/npm/@wangeditor/editor@5.1.23/dist/css/style.css" rel="stylesheet">
-<link href="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.css" rel="stylesheet">
+<!-- CDN 资源异步加载：CDN 慢时不阻塞页面，侧栏先显示出来 -->
+<link href="https://cdn.jsdelivr.net/npm/@wangeditor/editor@5.1.23/dist/css/style.css" rel="stylesheet" media="print" onload="this.media='all'">
+<link href="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.css" rel="stylesheet" media="print" onload="this.media='all'">
 <style>
 :root{--bg:#eef3f7;--card:#fff;--line:#d7e1ea;--ink:#1f2d3a;--ink2:#52606d;--brand:#1b4a6b;--brand2:#0e8aa8;--accent:#e8890c}
 *{margin:0;padding:0;box-sizing:border-box}
@@ -41,6 +42,9 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
 .node .go{display:none;border:none;background:none;color:#9fe0ee;font-size:13px;cursor:pointer;padding:2px 6px;border-radius:5px}
 .node:hover .go{display:block}
 .node .go:hover{background:rgba(255,255,255,.1)}
+.node .mv{display:none;border:none;background:none;color:#b7cbd9;font-size:10px;cursor:pointer;line-height:1;padding:2px 5px;border-radius:5px}
+.node:hover .mv{display:block}
+.node .mv:hover{background:rgba(255,255,255,.14);color:#fff}
 .side-foot{padding:12px 14px;font-size:12px;color:#9db8cc;border-top:1px solid rgba(255,255,255,.12);display:flex;gap:10px}
 .side-foot a{color:#9db8cc;text-decoration:none}
 .side-foot a:hover{color:#fff}
@@ -220,8 +224,8 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
 <!-- 文本框右上角悬浮复制按钮 -->
 <button id="pre-copy" type="button">复制</button>
 
-<script src="https://cdn.jsdelivr.net/npm/@wangeditor/editor@5.1.23/dist/index.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@wangeditor/editor@5.1.23/dist/index.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.js" defer></script>
 <script>
 (function(){
   var ICON = {
@@ -253,11 +257,13 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
   function toast(msg){ statusEl.textContent = msg; clearTimeout(toast._t); toast._t = setTimeout(function(){ statusEl.textContent=''; }, 2500); }
   function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   function childrenOf(id){ return allNodes.filter(function(n){ return n.parent === id; }); }
-  // 树排序：文件夹优先，组内按标题排序，避免保存后节点乱跳
+  // 树排序：文件夹优先；组内按手动排序权重（order）升序，未调整过时按标题排序
   function sortKids(list){
     return list.slice().sort(function(a,b){
       if (a.type==='folder' && b.type!=='folder') return -1;
       if (a.type!=='folder' && b.type==='folder') return 1;
+      var ao = a.order || 0, bo = b.order || 0;
+      if (ao !== bo) return ao - bo;
       return (a.title < b.title) ? -1 : (a.title > b.title ? 1 : 0);
     });
   }
@@ -438,6 +444,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     var clean = eachVideo(html, function(v){
       state.push({ src: v.getAttribute('src') || '', poster: v.getAttribute('data-poster') || v.getAttribute('poster') || '' });
       v.removeAttribute('data-poster');
+      v.setAttribute('preload', 'none'); // 编辑状态不预加载视频，避免页面卡顿/转圈
     });
     return { html: clean, state: state };
   }
@@ -626,6 +633,8 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     }
     html += icon;
     html += '<span class="tw">' + esc(n.title || '(未命名)') + '</span>';
+    html += '<button class="mv" data-act="up" title="上移">▲</button>';
+    html += '<button class="mv" data-act="down" title="下移">▼</button>';
     if (n.type === 'page') html += '<button class="go" data-act="preview" title="预览">↗</button>';
     html += '<button class="del" data-act="del" title="删除">×</button>';
     html += '</div>';
@@ -651,6 +660,18 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
             if(currentId === id){ currentId = null; currentType = null; }
             loadAll();
           });
+          return;
+        }
+        if (act === 'up' || act === 'down'){
+          e.stopPropagation();
+          fetch('/api/nodes/' + id + '/move', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dir: act })
+          }).then(function(r){ return r.json(); }).then(function(res){
+            if (res && res.error){ toast('移动失败：' + res.error); return; }
+            loadAll();
+          }).catch(function(err){ toast('移动失败：' + (err.message || err)); });
           return;
         }
         if (act === 'preview'){
@@ -681,6 +702,15 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     });
     var ea = document.getElementById('editor-area');
     var pa = document.getElementById('panel-area');
+    if (n.type === 'page' && !window.wangEditor){
+      // 编辑器脚本（CDN 资源）还在异步加载：稍后重试，避免整页等待
+      selectNode._n = (selectNode._n || 0) + 1;
+      if (selectNode._n > 60){ selectNode._n = 0; toast('编辑器组件加载失败，请检查网络后刷新'); return; }
+      clearTimeout(selectNode._t);
+      selectNode._t = setTimeout(function(){ selectNode(id); }, 300);
+      return;
+    }
+    selectNode._n = 0;
     if (n.type === 'page'){
       pa.classList.remove('show');
       ea.classList.add('show');
@@ -1466,7 +1496,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
             insertBlockAtCursor('<div data-w-e-type="video" data-w-e-is-void><iframe src="' + esc(player) + '" frameborder="no" scrolling="no" allowfullscreen="true"></iframe></div>');
           } else {
             insertBlockAtCursor('<video src="' + esc(src) + '"' + (poster ? ' poster="' + esc(poster) + '"' : '')
-              + ' controls preload="metadata"></video>');
+              + ' controls preload="none"></video>');
             pageVideos.push({ src: src, poster: poster });
           }
           toast('已插入视频');
@@ -1698,6 +1728,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       Array.prototype.forEach.call(el.querySelectorAll('video'), function(v, i){
         var st = pageVideos[i];
         if (st && st.poster && !v.getAttribute('poster')) v.setAttribute('poster', st.poster);
+        v.setAttribute('preload', 'none');
       });
     }
 
