@@ -81,7 +81,7 @@ main{max-width:1200px;margin:0 auto;padding:24px 20px 40px}
 .article pre:hover .pre-copy{opacity:1}
 .article pre .pre-copy:hover{background:#eef6f9;color:var(--brand2)}
 /* 视频（封面 + 大屏播放）*/
-.article .vdo-wrap{position:relative;margin:16px 0;max-width:640px}
+.article .vdo-wrap{position:relative;margin:16px auto;max-width:640px}
 .article .vdo-wrap video{display:block;width:100%;border-radius:10px;background:#000;cursor:pointer}
 .article .vdo-big{position:absolute;top:10px;right:10px;padding:5px 12px;border-radius:6px;background:rgba(17,24,32,.62);color:#fff;font-size:12px;text-decoration:none;backdrop-filter:blur(2px)}
 .article .vdo-big:hover{background:var(--brand2);text-decoration:none}
@@ -108,6 +108,7 @@ main{max-width:1200px;margin:0 auto;padding:24px 20px 40px}
 .article .mp-row .mp-i:hover{color:#0e8aa8}
 .article .mp-row .mp-dur{width:44px;flex:none;text-align:right;color:#7a8a99;font-size:13px;font-variant-numeric:tabular-nums}
 .article .mp-bar{border-top:1px solid #eef2f6;padding:6px 14px 10px;background:#fff}
+.article .mp-tip{display:none;padding:8px 14px 10px;border-top:1px solid #f3e7cf;background:#fffaf0;color:#9a6212;font-size:12.5px;line-height:1.6;word-break:break-word}
 .article .mp-prog{position:relative;height:16px;cursor:pointer}
 .article .mp-prog-bg{position:absolute;left:0;right:0;top:7px;height:2px;border-radius:2px;background:#e8eef4}
 .article .mp-prog-fill{position:absolute;left:0;top:7px;height:2px;border-radius:2px;background:#f0b429;width:0}
@@ -401,6 +402,9 @@ footer{max-width:900px;margin:0 auto;padding:0 20px 26px;font-size:12px;color:va
     box.appendChild(head);
     box.appendChild(list);
     box.appendChild(bar);
+    var tipEl = document.createElement('div');
+    tipEl.className = 'mp-tip';
+    box.appendChild(tipEl);
 
     var audio = document.createElement('audio');
     audio.preload = 'auto';
@@ -439,9 +443,18 @@ footer{max-width:900px;margin:0 auto;padding:0 20px 26px;font-size:12px;color:va
     }
     var wdTimer = null;
     function playFail(msg){
-      nowEl.textContent = '播放失败：' + msg + '（可点行尾「打开链接」用本地播放器打开）';
+      paint();
+      tipEl.textContent = '播放失败：' + msg;
+      tipEl.style.display = 'block';
       toggEl.innerHTML = MP_ICON.play;
       toggEl.title = '播放';
+    }
+    function unsupportedMsg(){
+      var ua = navigator.userAgent || '';
+      var isQQ = /QQBrowser|MQQBrowser/i.test(ua);
+      return '当前浏览器不支持 MP3 音频播放'
+        + (isQQ ? '（QQ 浏览器请点右上角菜单切换到「极速模式」，或改用 Chrome / Edge 打开）' : '（请改用 Chrome / Edge 打开）')
+        + '。也可点行尾「打开链接」下载后用本地播放器收听。';
     }
     function tryPlay(){
       var p = null;
@@ -449,7 +462,7 @@ footer{max-width:900px;margin:0 auto;padding:0 20px 26px;font-size:12px;color:va
       if (p && p.catch) p.catch(function(err){
         var n = (err && err.name) || '';
         if (n === 'NotAllowedError') playFail('浏览器拦截了播放，请再点一次播放按钮');
-        else if (n === 'NotSupportedError') playFail('当前浏览器不支持该音频格式');
+        else if (n === 'NotSupportedError') playFail(unsupportedMsg());
         else playFail(n || '未知原因');
       });
     }
@@ -509,7 +522,10 @@ footer{max-width:900px;margin:0 auto;padding:0 20px 26px;font-size:12px;color:va
     audio.addEventListener('waiting', function(){
       if (st.idx >= 0 && !audio.paused) timeEl.textContent = '缓冲中…';
     });
-    audio.addEventListener('playing', syncTime);
+    audio.addEventListener('playing', function(){
+      tipEl.style.display = 'none';
+      syncTime();
+    });
     audio.addEventListener('timeupdate', syncTime);
     audio.addEventListener('loadedmetadata', syncTime);
     audio.addEventListener('ended', function(){
@@ -677,10 +693,20 @@ footer{max-width:900px;margin:0 auto;padding:0 20px 26px;font-size:12px;color:va
     Array.prototype.forEach.call(content.querySelectorAll('video'), function(v){
       if (v.getAttribute('data-poster') && !v.getAttribute('poster')) v.setAttribute('poster', v.getAttribute('data-poster'));
       v.setAttribute('playsinline', 'true');
-      v.setAttribute('preload', 'none');
       var src = v.getAttribute('src')
         || (v.querySelector('source') ? v.querySelector('source').getAttribute('src') : '')
         || '';
+      // 有封面图就完全不预加载；没有封面图时用媒体片段 + metadata，让浏览器把首帧显示为封面
+      if (v.getAttribute('poster') || !src){
+        v.setAttribute('preload', 'none');
+      } else {
+        v.setAttribute('preload', 'metadata');
+        if (src.indexOf('#') < 0){
+          var frameSrc = src + '#t=0.5';
+          var srcEl = v.getAttribute('src') ? v : v.querySelector('source');
+          if (srcEl) srcEl.setAttribute('src', frameSrc);
+        }
+      }
       // wangEditor 会把 video 包在 <div data-w-e-type="video"> 里，wrapper 要挂到该 div 外层
       var slot = (v.parentNode && v.parentNode.getAttribute && v.parentNode.getAttribute('data-w-e-type') === 'video')
         ? v.parentNode : v;
