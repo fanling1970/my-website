@@ -696,17 +696,8 @@ footer{max-width:900px;margin:0 auto;padding:0 20px 26px;font-size:12px;color:va
       var src = v.getAttribute('src')
         || (v.querySelector('source') ? v.querySelector('source').getAttribute('src') : '')
         || '';
-      // 有封面图就完全不预加载；没有封面图时用媒体片段 + metadata，让浏览器把首帧显示为封面
-      if (v.getAttribute('poster') || !src){
-        v.setAttribute('preload', 'none');
-      } else {
-        v.setAttribute('preload', 'metadata');
-        if (src.indexOf('#') < 0){
-          var frameSrc = src + '#t=0.5';
-          var srcEl = v.getAttribute('src') ? v : v.querySelector('source');
-          if (srcEl) srcEl.setAttribute('src', frameSrc);
-        }
-      }
+      // 一律不预加载：封面靠 poster 显示；预加载/抓首帧会让下载管理器（IDM 等）反复弹下载框
+      v.setAttribute('preload', 'none');
       // wangEditor 会把 video 包在 <div data-w-e-type="video"> 里，wrapper 要挂到该 div 外层
       var slot = (v.parentNode && v.parentNode.getAttribute && v.parentNode.getAttribute('data-w-e-type') === 'video')
         ? v.parentNode : v;
