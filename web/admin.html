@@ -394,6 +394,21 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     if (!v) return [];
     return String(v).split(/\s+/).filter(function(x){ return x && x !== 'none' && FX_KEYS.indexOf(x) >= 0; });
   }
+  /* 音乐播放列表（🎵 + 音频链接）与"链接框"是同一套 h+p+p(a) 结构，
+     标题改成 H2 后会被误判成链接框并吞掉前两首歌，这里统一排除这类段落 */
+  var MUSIC_EXT_RE = /\.(mp3|m4a|wav|aac|ogg|flac|wma|ape)(\?|#|$)/i;
+  function isMusicCard(h, s1, s2){
+    if (!h || !s1 || !s2) return false;
+    var a = s2.querySelector && s2.querySelector('a');
+    var href = (a && a.getAttribute('href')) || '';
+    if (MUSIC_EXT_RE.test(href)) return true;
+    var t1 = (s1.textContent || '').trim(), t2 = (s2.textContent || '').trim();
+    var mic = '\uD83C\uDFB5';
+    if (t1.indexOf(mic) === 0 || t2.indexOf(mic) === 0) return true;
+    if (MUSIC_EXT_RE.test(t1) || MUSIC_EXT_RE.test(t2)) return true;
+    var ht = (h.textContent || '').trim();
+    return MUSIC_EXT_RE.test(ht);
+  }
   // 遍历 HTML 副本中的卡片（h2/h3/h5 + p + p(a) 三连），回调拿到 <a>
   function eachCardAnchor(html, cb){
     var div = document.createElement('div');
@@ -405,6 +420,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       if (!(s1 && s1.tagName === 'P' && s2 && s2.tagName === 'P')) continue;
       var a = s2.querySelector('a');
       if (!a) continue;
+      if (isMusicCard(h, s1, s2)) continue;
       cb(a, n++);
     }
     return div.innerHTML;
@@ -714,6 +730,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
   function selectNode(id){
     var n = findNode(id);
     if (!n) return;
+    if (typeof customUndoClear === 'function') customUndoClear();
     currentId = n.id;
     currentType = n.type;
     document.getElementById('title').value = n.title || '';
@@ -845,7 +862,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
         var cnt = 0;
         for (var ci=0; ci<hs.length; ci++){
           var ch = hs[ci], c1 = ch.nextElementSibling, c2 = c1 && c1.nextElementSibling;
-          if (c1 && c1.tagName === 'P' && c2 && c2.tagName === 'P' && c2.querySelector('a')){
+          if (c1 && c1.tagName === 'P' && c2 && c2.tagName === 'P' && c2.querySelector('a') && !isMusicCard(ch, c1, c2)){
             if (ch === hEl){ cardIdx = cnt; break; }
             cnt++;
           }
@@ -1782,7 +1799,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
         var node = kids[i];
         if (/^H[235]$/.test(node.tagName)){
           var s1 = node.nextElementSibling, s2 = s1 && s1.nextElementSibling;
-          if (s1 && s1.tagName === 'P' && s2 && s2.tagName === 'P' && s2.querySelector('a')){
+          if (s1 && s1.tagName === 'P' && s2 && s2.tagName === 'P' && s2.querySelector('a') && !isMusicCard(node, s1, s2)){
             items.push({ h: node, s1: s1, s2: s2, size: node.tagName });
             i += 3;
             continue;
@@ -1983,9 +2000,48 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       return newIdx;
     }
     // 通用：把一段 HTML 块插入到光标所在块之后（文本框 / 视频用）
+    /* setHtml 重建内容会让 wangEditor 自带撤销失效，这里为自定义插入保留快照 */
+    var customUndo = [];
+    function customUndoClear(){ customUndo.length = 0; }
+    function pushUndoSnapshot(){
+      try {
+        var box = getEditableBox();
+        if (!box) return false;
+        customUndo.push({ html: editor.getHtml(), cards: pageCards.slice(), videos: pageVideos.slice() });
+        if (customUndo.length > 30) customUndo.shift();
+        return true;
+      } catch(e){ return false; }
+    }
+    function applySnapshot(s){
+      pageCards = (s.cards || []).slice();
+      pageVideos = (s.videos || []).slice();
+      applyHtmlThen(s.html, -1);
+    }
+    function tryCustomUndo(ev){
+      if (!customUndo.length) return false;
+      if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+      applySnapshot(customUndo.pop());
+      return true;
+    }
+    // 工具栏"撤销"按钮与 Ctrl+Z：优先撤回自定义插入（setHtml 已清空编辑器历史）
+    var tbBox = document.getElementById('toolbar-container');
+    if (tbBox){
+      tbBox.addEventListener('click', function(ev){
+        var t = ev.target;
+        if (!t || !t.closest || !customUndo.length) return;
+        var el = t.closest('[data-tooltip]') || t.closest('.w-e-menu') || t;
+        var tip = (el.getAttribute && el.getAttribute('data-tooltip')) || (el.getAttribute && el.getAttribute('title')) || '';
+        if (tip.indexOf('撤销') >= 0) tryCustomUndo(ev);
+      }, true);
+    }
+    document.addEventListener('keydown', function(ev){
+      if (!customUndo.length) return;
+      if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && (ev.key === 'z' || ev.key === 'Z')) tryCustomUndo(ev);
+    }, true);
     function insertBlockAtCursor(blockHtml){
       var el = getEditableBox();
       if (!el) return false;
+      pushUndoSnapshot();
       var root = document.createElement('div');
       var anchor = null;
       try {
@@ -2285,6 +2341,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
   }
 
   function createNode(type){
+    if (typeof customUndoClear === 'function') customUndoClear();
     var title = window.prompt(type==='folder' ? '文件夹名称：' : '页面标题：', type==='folder' ? '新文件夹' : '新页面');
     if (!title || !title.trim()) return;
     fetch('/api/nodes', {

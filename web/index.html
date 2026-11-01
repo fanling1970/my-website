@@ -269,6 +269,19 @@ footer{max-width:900px;margin:0 auto;padding:0 20px 26px;font-size:12px;color:va
       while (w.firstChild) parent.insertBefore(w.firstChild, w);
       w.parentNode.removeChild(w);
     }
+    // 音乐播放列表的 🎵+音频链接段落同样满足 h+p+p(a) 三连，必须排除，否则标题设成 H2 会吞掉前两首歌
+    var MUSIC_EXT_RE = /\.(mp3|m4a|wav|aac|ogg|flac|wma|ape)(\?|#|$)/i;
+    function isMusicCard(h, s1, s2){
+      if (!h || !s1 || !s2) return false;
+      var a = s2.querySelector && s2.querySelector('a');
+      var href = (a && a.getAttribute('href')) || '';
+      if (MUSIC_EXT_RE.test(href)) return true;
+      var t1 = (s1.textContent || '').trim(), t2 = (s2.textContent || '').trim();
+      var mic = '\uD83C\uDFB5';
+      if (t1.indexOf(mic) === 0 || t2.indexOf(mic) === 0) return true;
+      if (MUSIC_EXT_RE.test(t1) || MUSIC_EXT_RE.test(t2)) return true;
+      return MUSIC_EXT_RE.test((h.textContent || '').trim());
+    }
     var kids = Array.prototype.slice.call(c.children);
     var items = [];
     var i = 0;
@@ -276,7 +289,7 @@ footer{max-width:900px;margin:0 auto;padding:0 20px 26px;font-size:12px;color:va
       var el = kids[i];
       if (/^H[235]$/.test(el.tagName)){
         var s1 = el.nextElementSibling, s2 = s1 && s1.nextElementSibling;
-        if (s1 && s1.tagName === 'P' && s2 && s2.tagName === 'P' && s2.querySelector('a')){
+        if (s1 && s1.tagName === 'P' && s2 && s2.tagName === 'P' && s2.querySelector('a') && !isMusicCard(el, s1, s2)){
           items.push({ h: el, s1: s1, s2: s2, size: el.tagName });
           i += 3; // 跳过卡片的 标题+介绍+链接 三块
           continue;
