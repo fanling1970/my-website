@@ -284,8 +284,7 @@ func (s *Store) Update(id string, n Node, parent *string) (Node, error) {
 	if parent != nil {
 		old.Parent = *parent
 	}
-	old.FileName = n.FileName
-	old.Size = n.Size
+	// FileName/Size 仅上传时写入，Update 不覆盖（否则改名/保存内容会把原始文件名清空）
 	old.Hidden = n.Hidden
 	old.UpdatedAt = time.Now()
 	s.nodes[id] = old

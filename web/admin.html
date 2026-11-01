@@ -635,6 +635,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     html += '<span class="tw">' + esc(n.title || '(未命名)') + '</span>';
     html += '<button class="mv" data-act="up" title="上移">▲</button>';
     html += '<button class="mv" data-act="down" title="下移">▼</button>';
+    html += '<button class="mv" data-act="ren" title="重命名">✎</button>';
     if (n.type === 'page') html += '<button class="go" data-act="preview" title="预览">↗</button>';
     html += '<button class="del" data-act="del" title="删除">×</button>';
     html += '</div>';
@@ -660,6 +661,26 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
             if(currentId === id){ currentId = null; currentType = null; }
             loadAll();
           });
+          return;
+        }
+        if (act === 'ren'){
+          e.stopPropagation();
+          var rn = findNode(id);
+          if (!rn) return;
+          var nt = prompt('将「' + (rn.title || '') + '」重命名为：', rn.title || '');
+          if (nt == null) return;
+          nt = nt.trim();
+          if (!nt || nt === rn.title) return;
+          fetch('/api/nodes/' + id, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: nt, content: rn.content || '', hidden: !!rn.hidden })
+          }).then(function(r){ return r.json(); }).then(function(res){
+            if (res && res.error){ toast('重命名失败：' + res.error); return; }
+            toast('已重命名为「' + nt + '」');
+            if (currentId === id) document.getElementById('title').value = nt;
+            loadAll();
+          }).catch(function(err){ toast('重命名失败：' + (err.message || err)); });
           return;
         }
         if (act === 'up' || act === 'down'){
@@ -1403,6 +1424,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       // 因此第一项用 value='' 作标签项，让按钮固定显示"插入图标"＋下拉箭头
       this.selectList = [
         { text: '插入图标', value: '', styleForRenderMenuList: { 'font-weight': '600', color: '#0d4a63' } },
+        { text: '▍竖条标题（H2）', value: 'H2BAR', styleForRenderMenuList: { color: '#0e8aa8', 'font-weight': '600' } },
         { text: '🖥 服务器', value: '🖥' },
         { text: '📄 文档', value: '📄' },
         { text: '🔗 链接', value: '🔗' },
@@ -1429,6 +1451,18 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
     IconMenu.prototype.isDisabled = function(){ return false; };
     IconMenu.prototype.exec = function(ed, value){
       if (!value) return;
+      if (value === 'H2BAR'){
+        // 竖条 = H2 标题自带的左边框样式：把当前行设为 H2
+        try {
+          var T = window.wangEditor && window.wangEditor.SlateTransforms;
+          if (!T) throw new Error('editor api missing');
+          T.setNodes(ed, { type: 'header2' });
+          toast('已设为竖条标题（H2），直接输入文字即可');
+        } catch(e){
+          try { ed.insertText('▍ '); } catch(e2){ toast('插入失败: ' + e2.message); }
+        }
+        return;
+      }
       try { ed.insertText(value + ' '); } catch(e){ toast('插入失败: ' + e.message); }
     };
 

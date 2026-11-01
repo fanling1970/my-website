@@ -85,6 +85,9 @@ main{max-width:1200px;margin:0 auto;padding:24px 20px 40px}
 .article .vdo-wrap video{display:block;width:100%;border-radius:10px;background:#000;cursor:pointer}
 .article .vdo-big{position:absolute;top:10px;right:10px;padding:5px 12px;border-radius:6px;background:rgba(17,24,32,.62);color:#fff;font-size:12px;text-decoration:none;backdrop-filter:blur(2px)}
 .article .vdo-big:hover{background:var(--brand2);text-decoration:none}
+.article .vdo-lazy{aspect-ratio:16/9;background:#0f1620;border-radius:10px;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.article .vdo-lazy:hover{background:#16202e}
+.article .vdo-lazy-btn{display:inline-block;padding:10px 22px;border:1px solid rgba(255,255,255,.5);border-radius:24px;color:#fff;font-size:14px}
 .article .vdo-wrap iframe{display:block;width:100%;aspect-ratio:16/9;border:0;border-radius:10px;background:#000}
 .article .mp-box{margin:16px 0;border:1px solid #e3eaf1;border-radius:10px;background:#fff;overflow:hidden}
 .article .mp-head{display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid #eef2f6;background:#fafcfd}
@@ -690,6 +693,14 @@ footer{max-width:900px;margin:0 auto;padding:0 20px 26px;font-size:12px;color:va
       };
       pre.appendChild(btn);
     });
+    // 无手势自动播放拦截：华为等部分手机浏览器打开页面会自动播放视频，
+    // 这里记录"用户是否碰过页面"，没碰过就把 play 一律拦停（点播放前必有点击/触摸，不受影响）
+    if (!window.__gtInit){
+      window.__gtInit = true;
+      ['pointerdown', 'touchstart', 'click', 'keydown'].forEach(function(ev){
+        document.addEventListener(ev, function(){ window.__gt = true; }, { capture: true, passive: true });
+      });
+    }
     Array.prototype.forEach.call(content.querySelectorAll('video'), function(v){
       if (v.getAttribute('data-poster') && !v.getAttribute('poster')) v.setAttribute('poster', v.getAttribute('data-poster'));
       v.setAttribute('playsinline', 'true');
@@ -698,6 +709,12 @@ footer{max-width:900px;margin:0 auto;padding:0 20px 26px;font-size:12px;color:va
         || '';
       // 一律不预加载：封面靠 poster 显示；预加载/抓首帧会让下载管理器（IDM 等）反复弹下载框
       v.setAttribute('preload', 'none');
+      if (!v.__gtGuard){
+        v.__gtGuard = 1;
+        v.addEventListener('play', function(){
+          if (!window.__gt){ try { v.pause(); } catch(e){} }
+        });
+      }
       // wangEditor 会把 video 包在 <div data-w-e-type="video"> 里，wrapper 要挂到该 div 外层
       var slot = (v.parentNode && v.parentNode.getAttribute && v.parentNode.getAttribute('data-w-e-type') === 'video')
         ? v.parentNode : v;
@@ -729,6 +746,22 @@ footer{max-width:900px;margin:0 auto;padding:0 20px 26px;font-size:12px;color:va
       holder.parentNode.insertBefore(wrap, holder);
       wrap.appendChild(holder);
       var fsrc = f.getAttribute('src') || '';
+      // 移动端（华为等浏览器会让嵌入的 iframe 视频自动播放）：先显示占位封面，点击后才真正加载
+      var isMobile = /Android|HarmonyOS|iPhone|iPad|Mobile/i.test(navigator.userAgent || '');
+      if (isMobile && fsrc){
+        f.setAttribute('data-src', fsrc);
+        f.removeAttribute('src');
+        f.style.display = 'none';
+        var lazy = document.createElement('div');
+        lazy.className = 'vdo-lazy';
+        lazy.innerHTML = '<span class="vdo-lazy-btn">▶ 点击加载视频</span>';
+        lazy.onclick = function(){
+          f.setAttribute('src', f.getAttribute('data-src') || '');
+          f.style.display = '';
+          if (lazy.parentNode) lazy.parentNode.removeChild(lazy);
+        };
+        wrap.appendChild(lazy);
+      }
       var m = fsrc.match(/bvid=(BV[0-9A-Za-z]+)/i);
       if (m){
         var b = document.createElement('a');
