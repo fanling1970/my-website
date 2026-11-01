@@ -883,17 +883,32 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       function actionOpt(v){
         return '<option value="' + v + '"' + (v === curAction ? ' selected' : '') + '>' + esc(v) + '</option>';
       }
-      var pkPages = allNodes.filter(function(n){ return n.type === 'page'; });
-      var pkFiles = allNodes.filter(function(n){ return n.type === 'file'; });
-      function pkOpt(list, prefix){
-        return list.map(function(p){
-          var url = p.type === 'file' ? p.content : '/?p=' + p.id;
-          return '<option value="' + esc(url) + '">' + esc(prefix + p.title) + '</option>';
-        }).join('');
+      function pkFileOpt(f){
+        return '<option value="' + esc(f.content) + '">📦 ' + esc(f.title) + '</option>';
       }
+      // 附件按文件夹分组：组的顺序与侧栏一致（文件夹优先 → 排序权重 → 标题），optgroup 天然全部展开
+      function folderGroup(folder, prefix){
+        var label = prefix + folder.title;
+        var kids = sortKids(allNodes.filter(function(n){ return n.parent === folder.id; }));
+        var files = kids.filter(function(n){ return n.type === 'file'; });
+        var subs = kids.filter(function(n){ return n.type === 'folder'; });
+        var html = '';
+        if (files.length) html += '<optgroup label="📁 ' + esc(label) + '">' + files.map(pkFileOpt).join('') + '</optgroup>';
+        subs.forEach(function(sf){ html += folderGroup(sf, label + ' / '); });
+        return html;
+      }
+      var pkPages = sortKids(allNodes.filter(function(n){ return n.type === 'page'; }));
+      var rootKids = sortKids(allNodes.filter(function(n){ return !n.parent; }));
+      var rootFiles = rootKids.filter(function(n){ return n.type === 'file'; });
+      var rootFolders = rootKids.filter(function(n){ return n.type === 'folder'; });
       var pkOpts = '';
-      if (pkPages.length) pkOpts += '<optgroup label="站内页面">' + pkOpt(pkPages, '📄 ') + '</optgroup>';
-      if (pkFiles.length) pkOpts += '<optgroup label="附件 / 软件（自动填下载地址）">' + pkOpt(pkFiles, '📦 ') + '</optgroup>';
+      if (pkPages.length){
+        pkOpts += '<optgroup label="站内页面">' + pkPages.map(function(p){
+          return '<option value="/?p=' + p.id + '">📄 ' + esc(p.title) + '</option>';
+        }).join('') + '</optgroup>';
+      }
+      if (rootFiles.length) pkOpts += '<optgroup label="📦 未分组附件">' + rootFiles.map(pkFileOpt).join('') + '</optgroup>';
+      rootFolders.forEach(function(f){ pkOpts += folderGroup(f, ''); });
       openModal(
         '<h3>编辑链接框</h3>'
         + '<div class="mrow"><label>标题（可加图标 emoji）</label><input type="text" id="cd-title" value="' + esc(title) + '" placeholder="例如：路由器管理"></div>'
@@ -2347,6 +2362,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
         return;
       }
       var f = files[i];
+      var upParent = currentParent();
       var fill = document.getElementById('up-fill-' + i);
       var st = document.getElementById('up-st-' + i);
       var setErr = function(msg){
@@ -2358,6 +2374,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
       if (st) st.textContent = '上传中… 0%';
       var fd = new FormData();
       fd.append('file', f);
+      fd.append('parent', upParent);
       var xhr = new XMLHttpRequest();
       xhr.open('POST', '/api/upload');
       xhr.upload.onprogress = function(e){
@@ -2380,7 +2397,7 @@ body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             type: 'file',
-            parent: currentParent(),
+            parent: upParent,
             title: res.data.name,
             content: res.data.url,
             fileName: res.data.name,

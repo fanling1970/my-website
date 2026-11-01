@@ -208,6 +208,140 @@ func (s *Store) Create(n Node) (Node, error) {
 	return n, nil
 }
 
+// sanitizePathSegment 把节点标题转成安全的目录名（保留中文，去掉路径分隔符等非法字符）
+func sanitizePathSegment(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if r < 32 || strings.ContainsRune(`/\:*?"<>|`, r) {
+			return -1
+		}
+		return r
+	}, s)
+	s = strings.Trim(s, " .")
+	if s == "" {
+		s = "folder"
+	}
+	return s
+}
+
+// FolderRelPathT 文件夹节点在 files 目录下的相对物理路径（祖先标题链）；title 非空时代替该节点自身标题（重命名时用旧/新标题算路径）
+func (s *Store) FolderRelPathT(id, title string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var segs []string
+	cur := id
+	for cur != "" {
+		n, ok := s.nodes[cur]
+		if !ok {
+			break
+		}
+		t := n.Title
+		if cur == id && title != "" {
+			t = title
+		}
+		segs = append([]string{sanitizePathSegment(t)}, segs...)
+		cur = n.Parent
+	}
+	return filepath.Join(segs...)
+}
+
+// Subtree 返回该节点及全部子孙（先父后子；倒序遍历即子孙在前）
+func (s *Store) Subtree(id string) []Node {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []Node
+	var walk func(cur string)
+	walk = func(cur string) {
+		n, ok := s.nodes[cur]
+		if !ok {
+			return
+		}
+		out = append(out, n)
+		for _, x := range s.nodes {
+			if x.Parent == cur {
+				walk(x.ID)
+			}
+		}
+	}
+	walk(id)
+	return out
+}
+
+// ContentRefs 统计仍有多少节点引用同一内容地址（物理删文件前防止误删共享文件）
+func (s *Store) ContentRefs(content string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c := 0
+	for _, n := range s.nodes {
+		if n.Content == content {
+			c++
+		}
+	}
+	return c
+}
+
+// RewriteContentPrefix 把子树内文件节点的内容地址前缀 oldP 换成 newP（文件夹重命名后同步下载地址）
+func (s *Store) RewriteContentPrefix(rootID, oldP, newP string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ids := map[string]bool{rootID: true}
+	for changed := true; changed; {
+		changed = false
+		for _, n := range s.nodes {
+			if ids[n.Parent] && !ids[n.ID] {
+				ids[n.ID] = true
+				changed = true
+			}
+		}
+	}
+	dirty := false
+	for id := range ids {
+		n, ok := s.nodes[id]
+		if !ok || n.Type != TypeFile {
+			continue
+		}
+		if strings.HasPrefix(n.Content, oldP) {
+			n.Content = newP + strings.TrimPrefix(n.Content, oldP)
+			s.nodes[id] = n
+			dirty = true
+		}
+	}
+	if dirty {
+		_ = s.persistLocked()
+	}
+}
+
+// escapeRelURL 相对路径各段分别 URL 转义后用 / 连接
+func escapeRelURL(rel string) string {
+	segs := strings.Split(filepath.ToSlash(rel), "/")
+	for i, s := range segs {
+		segs[i] = url.PathEscape(s)
+	}
+	return strings.Join(segs, "/")
+}
+
+// contentPhysical 把 /files/... 或 /uploads/... 的内容地址还原成磁盘路径（含防目录穿越）
+func contentPhysical(filesBase, uploadsBase, content string) string {
+	var base, rel string
+	switch {
+	case strings.HasPrefix(content, "/files/"):
+		base, rel = filesBase, strings.TrimPrefix(content, "/files/")
+	case strings.HasPrefix(content, "/uploads/"):
+		base, rel = uploadsBase, strings.TrimPrefix(content, "/uploads/")
+	default:
+		return ""
+	}
+	rel = strings.Split(strings.Split(rel, "?")[0], "#")[0]
+	dec, err := url.PathUnescape(rel)
+	if err != nil {
+		return ""
+	}
+	p := filepath.Join(base, filepath.FromSlash(dec))
+	if p != filepath.Clean(base) && !strings.HasPrefix(p, filepath.Clean(base)+string(os.PathSeparator)) {
+		return ""
+	}
+	return p
+}
+
 // siblingLess 同级节点排序：文件夹优先，再按 order 升序，最后按标题
 func siblingLess(a, b Node) bool {
 	af, bf := a.Type == TypeFolder, b.Type == TypeFolder
@@ -596,6 +730,12 @@ func main() {
 	}
 	uploadsDir := filepath.Join(dataDir, "uploads")
 	filesDir := filepath.Join(dataDir, "files")
+	// 编辑页的文件夹与 files 目录一一对应：启动时给已存在的文件夹补建物理目录
+	for _, fn := range store.List() {
+		if fn.Type == TypeFolder {
+			_ = os.MkdirAll(filepath.Join(filesDir, store.FolderRelPathT(fn.ID, "")), 0o755)
+		}
+	}
 	authPath = filepath.Join(dataDir, "auth.json")
 	settingsPath = filepath.Join(dataDir, "settings.json")
 	migrateAuthIfNeeded()
@@ -643,6 +783,9 @@ func main() {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		if n.Type == TypeFolder {
+			_ = os.MkdirAll(filepath.Join(filesDir, store.FolderRelPathT(n.ID, "")), 0o755)
+		}
 		writeJSON(w, 201, n)
 	}))
 	mux.HandleFunc("GET /api/nodes/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -668,18 +811,64 @@ func main() {
 			writeJSON(w, 400, map[string]string{"error": "请求格式错误"})
 			return
 		}
-		n, err := store.Update(r.PathValue("id"), Node{Title: req.Title, Content: req.Content, Hidden: req.Hidden}, req.Parent)
+		id := r.PathValue("id")
+		oldRel := ""
+		if old, ok := store.Get(id); ok && old.Type == TypeFolder && old.Title != req.Title {
+			oldRel = store.FolderRelPathT(id, old.Title)
+		}
+		n, err := store.Update(id, Node{Title: req.Title, Content: req.Content, Hidden: req.Hidden}, req.Parent)
 		if err != nil {
 			writeJSON(w, 404, map[string]string{"error": "not found"})
 			return
 		}
+		if oldRel != "" {
+			newRel := store.FolderRelPathT(id, "")
+			oldAbs := filepath.Join(filesDir, oldRel)
+			newAbs := filepath.Join(filesDir, newRel)
+			if _, statErr := os.Stat(oldAbs); statErr == nil {
+				_ = os.MkdirAll(filepath.Dir(newAbs), 0o755)
+				if renErr := os.Rename(oldAbs, newAbs); renErr == nil {
+					store.RewriteContentPrefix(id, "/files/"+escapeRelURL(oldRel)+"/", "/files/"+escapeRelURL(newRel)+"/")
+				}
+			} else {
+				_ = os.MkdirAll(newAbs, 0o755)
+			}
+		}
 		writeJSON(w, 200, n)
 	}))
 	mux.HandleFunc("DELETE /api/nodes/{id}", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
-		count, err := store.Delete(r.PathValue("id"))
+		id := r.PathValue("id")
+		// 删除前先收集子树的文件地址与文件夹物理路径（删完就查不到标题了）
+		sub := store.Subtree(id)
+		var fileContents []string
+		var folderRels []string
+		for _, n := range sub {
+			switch n.Type {
+			case TypeFile:
+				if n.Content != "" {
+					fileContents = append(fileContents, n.Content)
+				}
+			case TypeFolder:
+				folderRels = append(folderRels, store.FolderRelPathT(n.ID, ""))
+			}
+		}
+		count, err := store.Delete(id)
 		if err != nil {
 			writeJSON(w, 404, map[string]string{"error": "not found"})
 			return
+		}
+		// 物理删除文件：仍被其它节点引用的保留（扫描挂载等共享场景）
+		for _, c := range fileContents {
+			if store.ContentRefs(c) > 0 {
+				continue
+			}
+			if p := contentPhysical(filesDir, uploadsDir, c); p != "" {
+				_ = os.Remove(p)
+			}
+		}
+		// 物理删除文件夹：倒序（子孙目录在前）；os.Remove 只删空目录，用户手动放入的文件不受影响
+		for i := len(folderRels) - 1; i >= 0; i-- {
+			_ = os.Remove(filepath.Join(filesDir, folderRels[i]))
 		}
 		writeJSON(w, 200, map[string]any{"ok": true, "deleted": count})
 	}))
@@ -726,8 +915,19 @@ func main() {
 			subdir = "uploads"
 		}
 		dir := filesDir
+		urlPrefix := "/" + subdir + "/"
 		if subdir == "uploads" {
 			dir = uploadsDir
+		} else if parent := r.FormValue("parent"); parent != "" {
+			// 上传到某个文件夹：文件同步落到该文件夹的物理目录
+			if pn, ok := store.Get(parent); ok && pn.Type == TypeFolder {
+				rel := store.FolderRelPathT(parent, "")
+				sub := filepath.Join(filesDir, rel)
+				if err := os.MkdirAll(sub, 0o755); err == nil {
+					dir = sub
+					urlPrefix = "/files/" + escapeRelURL(rel) + "/"
+				}
+			}
 		}
 		name := filepath.Base(header.Filename) // 保留原始文件名（用户要求上传软件不改名）
 		if name == "." || name == string(filepath.Separator) || name == "" {
@@ -758,7 +958,7 @@ func main() {
 		writeJSON(w, 200, map[string]any{
 			"errno": 0,
 			"data": map[string]any{
-				"url":  "/" + subdir + "/" + url.PathEscape(name),
+				"url":  urlPrefix + url.PathEscape(name),
 				"alt":  header.Filename,
 				"href": "",
 				"kind": kind,
